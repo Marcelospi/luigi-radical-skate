@@ -15,6 +15,7 @@ class SoundSystem {
     this.rollFilter = null;
     this.rollGain = null;
     this.jointPhase = 0;
+    this.freehubPhase = 0;
 
     this.grindNode = null;
     this.grindFilter = null;
@@ -151,12 +152,13 @@ class SoundSystem {
   }
 
   /**
-   * Atualiza o som contínuo das rodinhas conforme contato, velocidade e superfície.
+   * Atualiza o som contínuo das rodas conforme contato, velocidade, superfície e esporte.
    * @param {boolean} onGround
    * @param {number} speedRatio - 0..1.4
-   * @param {string} [surfaceType='asphalt'] - 'asphalt' | 'wood' | 'metal' | 'cosmic' | 'breakable'
+   * @param {string} [surfaceType='asphalt']
+   * @param {string} [sportId='skate'] - 'skate' | 'bmx' | 'scooter' | 'skates'
    */
-  updateRoll(onGround, speedRatio, surfaceType = 'asphalt') {
+  updateRoll(onGround, speedRatio, surfaceType = 'asphalt', sportId = 'skate') {
     if (!this.rollGain || !this.rollFilter || !this.ctx) return;
     const now = this.ctx.currentTime;
 
@@ -169,7 +171,7 @@ class SoundSystem {
     this.isRolling = true;
     const clampedSpeed = Math.max(0, Math.min(1.5, speedRatio));
 
-    // Perfil acústico por tipo de superfície
+    // Perfil acústico base por superfície
     let baseFreq = 340;
     let freqSpan = 560;
     let qVal = 1.05;
@@ -197,12 +199,43 @@ class SoundSystem {
       gainScale = 0.26;
     }
 
+    // Modulação de timbre por esporte
+    if (sportId === 'bmx') {
+      // Pneu de borracha mais grave e encorpado
+      baseFreq *= 0.56;
+      freqSpan *= 0.58;
+      qVal = 0.85;
+      gainScale *= 0.72;
+    } else if (sportId === 'scooter') {
+      // Rodinhas menores e mais agudas de PU/alumínio
+      baseFreq *= 1.42;
+      freqSpan *= 1.25;
+      qVal = Math.max(1.5, qVal);
+      gainScale *= 0.92;
+    } else if (sportId === 'skates') {
+      // Deslize suave e sedoso de 8 rodinhas inline
+      baseFreq *= 1.12;
+      freqSpan *= 0.95;
+      qVal = 0.9;
+      gainScale *= 0.78;
+    }
+
     const targetFreq = baseFreq + clampedSpeed * freqSpan;
     const targetGain = Math.min(0.32, clampedSpeed * gainScale);
 
     this.rollFilter.frequency.setTargetAtTime(targetFreq, now, 0.06);
     this.rollFilter.Q.setTargetAtTime(qVal, now, 0.06);
     this.rollGain.gain.setTargetAtTime(targetGain, now, 0.05);
+
+    // Clique característico de catraca (freehub) da BMX em velocidade
+    if (sportId === 'bmx' && clampedSpeed > 0.35) {
+      this.freehubPhase += 0.18 + clampedSpeed * 0.22;
+      if (this.freehubPhase >= 1) {
+        this.freehubPhase -= 1;
+        this.playFreehubClick(clampedSpeed);
+      }
+      return;
+    }
 
     // Batida sutil periódica das juntas da pista / tábuas do píer
     const jointStep = (surfaceType === 'wood' ? 0.065 : 0.032) * (0.6 + clampedSpeed);
@@ -211,6 +244,25 @@ class SoundSystem {
       this.jointPhase -= 1;
       this.playSurfaceJoint(clampedSpeed, surfaceType);
     }
+  }
+
+  /** Clique metálico sutil de catraca (freehub) da bicicleta BMX. */
+  playFreehubClick(speedNorm) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1750 + speedNorm * 450, now);
+    osc.frequency.exponentialRampToValueAtTime(900, now + 0.012);
+
+    gain.gain.setValueAtTime(Math.min(0.032, 0.014 + speedNorm * 0.014), now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.014);
+
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.016);
   }
 
   /** Micro estalo rítmico quando as rodinhas passam por uma emenda de asfalto ou tábua. */
@@ -410,12 +462,84 @@ class SoundSystem {
   // Efeitos sonoros de skate
   // ==========================================================
 
-  // Pop realista de madeira do skate + leve raspada da lixa no ollie
-  playJump() {
+  // Salto realista adaptado ao esporte ('skate' | 'bmx' | 'scooter' | 'skates')
+  playJump(sportId = 'skate') {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // 1. Estalo seco do tail batendo na pista (snap de madeira)
+    if (sportId === 'bmx') {
+      // Bunny hop: impulso grave de pneu/suspensão
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(165, now);
+      osc.frequency.exponentialRampToValueAtTime(75, now + 0.09);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(now);
+      osc.stop(now + 0.11);
+
+      const spring = this.ctx.createOscillator();
+      const sGain = this.ctx.createGain();
+      spring.type = 'triangle';
+      spring.frequency.setValueAtTime(240, now + 0.02);
+      spring.frequency.exponentialRampToValueAtTime(420, now + 0.11);
+      sGain.gain.setValueAtTime(0.11, now + 0.02);
+      sGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      spring.connect(sGain);
+      sGain.connect(this.output());
+      spring.start(now + 0.02);
+      spring.stop(now + 0.13);
+      return;
+    }
+
+    if (sportId === 'scooter') {
+      // Estalo metálico leve de deck de alumínio
+      const ping = this.ctx.createOscillator();
+      const pGain = this.ctx.createGain();
+      ping.type = 'triangle';
+      ping.frequency.setValueAtTime(1180, now);
+      ping.frequency.exponentialRampToValueAtTime(480, now + 0.06);
+      pGain.gain.setValueAtTime(0.18, now);
+      pGain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
+      ping.connect(pGain);
+      pGain.connect(this.output());
+      ping.start(now);
+      ping.stop(now + 0.07);
+
+      const body = this.ctx.createOscillator();
+      const bGain = this.ctx.createGain();
+      body.type = 'sine';
+      body.frequency.setValueAtTime(290, now);
+      body.frequency.exponentialRampToValueAtTime(135, now + 0.07);
+      bGain.gain.setValueAtTime(0.18, now);
+      bGain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+      body.connect(bGain);
+      bGain.connect(this.output());
+      body.start(now);
+      body.stop(now + 0.08);
+      return;
+    }
+
+    if (sportId === 'skates') {
+      // Impulso limpo e ágil de patins (funciona super bem também no pulo duplo!)
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(280, now);
+      osc.frequency.exponentialRampToValueAtTime(620, now + 0.09);
+      gain.gain.setValueAtTime(0.17, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(now);
+      osc.stop(now + 0.11);
+      return;
+    }
+
+    // Padrão Skate: 1. Estalo seco do tail batendo na pista (snap de madeira)
     const snapLen = Math.floor(this.ctx.sampleRate * 0.055);
     const snapBuf = this.ctx.createBuffer(1, snapLen, this.ctx.sampleRate);
     const snapData = snapBuf.getChannelData(0);
@@ -720,33 +844,41 @@ class SoundSystem {
    * Som realista das rodas batendo na superfície ao pousar.
    * @param {number} [impactNorm=0.5] - intensidade normalizada 0..1 (aceita velocidade bruta)
    * @param {string} [surfaceType='asphalt'] - tipo da superfície
+   * @param {string} [sportId='skate'] - 'skate' | 'bmx' | 'scooter' | 'skates'
    */
-  playLand(impactNorm = 0.5, surfaceType = 'asphalt') {
+  playLand(impactNorm = 0.5, surfaceType = 'asphalt', sportId = 'skate') {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
 
     // Retrocompatível caso alguém passe velocidade vertical bruta (ex.: 14)
     const norm = Math.max(0.15, Math.min(1, impactNorm > 1.5 ? impactNorm / 18 : impactNorm));
 
-    // 1. Corpo grave do impacto (trucks absorvendo a queda)
+    // 1. Corpo grave do impacto (pneus/suspensão na BMX, trucks no skate/patinete)
     const thudOsc = this.ctx.createOscillator();
     const thudGain = this.ctx.createGain();
     thudOsc.type = 'sine';
-    const baseThud = surfaceType === 'wood' ? 145 : (surfaceType === 'metal' ? 210 : 115);
-    thudOsc.frequency.setValueAtTime(baseThud + norm * 30, now);
-    thudOsc.frequency.exponentialRampToValueAtTime(42, now + 0.09);
+    let baseThud = surfaceType === 'wood' ? 145 : (surfaceType === 'metal' ? 210 : 115);
+    if (sportId === 'bmx') baseThud = 86;
+    else if (sportId === 'scooter') baseThud = 175;
+    else if (sportId === 'skates') baseThud = 140;
 
-    thudGain.gain.setValueAtTime(0.14 + norm * 0.22, now);
-    thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    thudOsc.frequency.setValueAtTime(baseThud + norm * 30, now);
+    thudOsc.frequency.exponentialRampToValueAtTime(sportId === 'bmx' ? 34 : 42, now + (sportId === 'bmx' ? 0.13 : 0.09));
+
+    thudGain.gain.setValueAtTime((sportId === 'bmx' ? 0.18 : 0.14) + norm * 0.22, now);
+    thudGain.gain.exponentialRampToValueAtTime(0.001, now + (sportId === 'bmx' ? 0.14 : 0.11));
 
     thudOsc.connect(thudGain);
     thudGain.connect(this.output());
     thudOsc.start(now);
-    thudOsc.stop(now + 0.12);
+    thudOsc.stop(now + 0.15);
 
     // 2. Estalo duplo rápido (rodas traseiras + dianteiras tocando a pista)
-    const hitOffsets = [0, 0.016];
-    const cutoff = surfaceType === 'wood' ? 1100 : (surfaceType === 'metal' ? 2800 : 1750);
+    const hitOffsets = sportId === 'bmx' ? [0] : [0, 0.016];
+    let cutoff = surfaceType === 'wood' ? 1100 : (surfaceType === 'metal' ? 2800 : 1750);
+    if (sportId === 'bmx') cutoff *= 0.55;
+    else if (sportId === 'scooter') cutoff *= 1.35;
+    else if (sportId === 'skates') cutoff *= 1.15;
 
     hitOffsets.forEach((offset, idx) => {
       const t = now + offset;
@@ -766,7 +898,8 @@ class SoundSystem {
       filter.frequency.exponentialRampToValueAtTime(280, t + 0.085);
 
       const gain = this.ctx.createGain();
-      const vol = (0.12 + norm * 0.16) * (idx === 0 ? 1 : 0.72);
+      const sportGain = sportId === 'bmx' ? 0.65 : (sportId === 'skates' ? 0.78 : 1.0);
+      const vol = (0.12 + norm * 0.16) * sportGain * (idx === 0 ? 1 : 0.72);
       gain.gain.setValueAtTime(vol, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
 

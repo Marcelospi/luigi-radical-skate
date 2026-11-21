@@ -764,5 +764,121 @@ console.log('\n=== 23. Modo sprite aprimorado (crossfade, micro-skew e manobras)
   check('modo sprite aprimorado renderiza sem excecoes', drawOk === true, erro);
 }
 
+// ============================================================
+console.log('\n=== 24. 4 Esportes: Skate, BMX, Patinete e Patins ===');
+{
+  const sports = sandbox.SPORTS;
+  const ids = ['skate', 'bmx', 'scooter', 'skates'];
+  check('window.SPORTS expoe os 4 esportes completos',
+    ids.every(id => sports && sports[id] && Array.isArray(sports[id].tricks) && Array.isArray(sports[id].touchLabels)));
+
+  // 24a. Patins: pulo duplo no ar
+  {
+    const { world, player } = newRun();
+    player.setSport('skates');
+    // Primeiro salto
+    step(world, player, { Space: true });
+    for (let i = 0; i < 12; i++) step(world, player, {});
+    const vyAntes = player.vy;
+    // Segundo salto no ar
+    step(world, player, { Space: true });
+    const fezPuloDuplo = player.vy < vyAntes && player.vy < -10 && player.doubleJumpAvailable === false;
+    const naoFezTrickAntes = !player.tricksInAir.includes('MISTY FLIP');
+
+    // Solta e aperta Space de novo -> agora dispara MISTY FLIP
+    step(world, player, {});
+    step(world, player, { Space: true });
+    const fezMistyDepois = player.tricksInAir.includes('MISTY FLIP');
+
+    // Pousa e recupera pulo duplo
+    for (let i = 0; i < 120 && !player.onGround; i++) step(world, player, {});
+    check('Patins: pulo duplo funciona no ar antes de MISTY FLIP',
+      fezPuloDuplo && naoFezTrickAntes, `vyAntes=${vyAntes.toFixed(1)}`);
+    check('Patins: apos pulo duplo, Space no ar faz MISTY FLIP', fezMistyDepois === true);
+    check('Patins: pousar recarrega o pulo duplo', player.onGround && player.doubleJumpAvailable === true);
+  }
+
+  // 24b. Patinete: manobra completa mais rapido que no Skate
+  {
+    function passosManobra(sportId) {
+      const { world, player } = newRun();
+      player.setSport(sportId);
+      step(world, player, { ArrowUp: true });
+      for (let i = 0; i < 4; i++) step(world, player, { ArrowUp: true });
+      step(world, player, { KeyZ: true });
+      let passos = 1;
+      for (let i = 0; i < 40 && player.trickState; i++) {
+        step(world, player, {});
+        passos++;
+      }
+      return passos;
+    }
+    const pSkate = passosManobra('skate');
+    const pScooter = passosManobra('scooter');
+    check('Patinete: manobra completa mais rapido que no Skate', pScooter < pSkate,
+      `patinete=${pScooter} vs skate=${pSkate} passos`);
+  }
+
+  // 24c. BMX: lancamento na rampa mais alto que no Skate
+  {
+    function launchVyRamp(sportId) {
+      const { world, player } = newRun();
+      player.setSport(sportId);
+      world.obstacles.length = 0;
+      world.ramps.length = 0;
+      world.ramps.push({ x: player.x + 140, y: world.groundY - 66, width: 176, height: 66, used: false, usedAnim: 0, riderU: 0 });
+      for (let i = 0; i < 80; i++) {
+        step(world, player, {});
+        if (player.frameEvents.some(e => e.type === 'ramp')) return player.vy;
+      }
+      return 0;
+    }
+    const vySkate = launchVyRamp('skate');
+    const vyBmx = launchVyRamp('bmx');
+    check('BMX: decolagem na rampa mais forte que no Skate', vyBmx < vySkate - 1.5,
+      `bmx=${vyBmx.toFixed(2)} vs skate=${vySkate.toFixed(2)}`);
+  }
+
+  // 24d. Renderizacao dos 4 esportes sem erros nem NaN
+  {
+    let nanCalls = 0;
+    const baseCtx = mockCtx();
+    const nanCheckCtx = new Proxy(baseCtx, {
+      get(target, prop) {
+        const val = target[prop];
+        if (typeof val === 'function') {
+          return (...args) => {
+            for (const a of args) {
+              if (typeof a === 'number' && !Number.isFinite(a)) nanCalls++;
+            }
+            return val.apply(target, args);
+          };
+        }
+        return val;
+      }
+    });
+
+    let allOk = true;
+    let err = '';
+    try {
+      for (const id of ids) {
+        const { world, player } = newRun();
+        player.setSport(id);
+        player.draw(nanCheckCtx);
+        step(world, player, { ArrowRight: true });
+        player.draw(nanCheckCtx);
+        step(world, player, { ArrowUp: true });
+        step(world, player, { KeyZ: true });
+        player.draw(nanCheckCtx);
+      }
+    } catch (e) {
+      allOk = false;
+      err = String(e && e.message || e);
+    }
+    check('todos os 4 esportes renderizam sem erros nem NaN', allOk && nanCalls === 0,
+      err || `nanCalls=${nanCalls}`);
+  }
+}
+
 console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
 process.exit(failures === 0 ? 0 : 1);

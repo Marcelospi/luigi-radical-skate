@@ -43,6 +43,100 @@ const TRICKS = [
   { key: 'Space', name: 'SUPER FLIP', pts: 600, targetAngle:  Math.PI * 2,   rotSpeed:  0.38, color: '#8b5cf6', style: 'super' }
 ];
 
+const SPORTS = {
+  skate: {
+    id: 'skate',
+    name: 'Skate',
+    icon: '🛹',
+    tagline: 'Equilibrado e clássico',
+    tip: 'Manobras precisas, bom controle no ar e ótimo equilíbrio em tudo.',
+    speedMult: 1.0,
+    accelMult: 1.0,
+    jumpMult: 1.0,
+    rampBoostMult: 1.0,
+    trickSpeedMult: 1.0,
+    grindScoreMult: 1.0,
+    landingSoftness: 1.0,
+    airDoubleJump: false,
+    stats: { velocidade: 'Alta', salto: 'Alto', manobras: 'Clássicas' },
+    touchLabels: ['FLIP', '360°', 'GRAB'],
+    grindLabel: 'GRIND!',
+    tricks: TRICKS
+  },
+  bmx: {
+    id: 'bmx',
+    name: 'Bicicleta (BMX)',
+    icon: '🚲',
+    tagline: 'Super Rampa & Estável',
+    tip: 'Voa mais alto nas rampas, pousa macio e manda Peg Grind metálico!',
+    speedMult: 1.08,
+    accelMult: 1.04,
+    jumpMult: 0.98,
+    rampBoostMult: 1.12,
+    trickSpeedMult: 0.88,
+    grindScoreMult: 1.15,
+    landingSoftness: 1.25,
+    airDoubleJump: false,
+    stats: { velocidade: 'Muito Alta', salto: 'Super Rampa', manobras: 'Pesadas' },
+    touchLabels: ['WHIP', 'BAR', 'SUPER'],
+    grindLabel: 'PEG GRIND!',
+    tricks: [
+      { key: 'KeyZ',  name: 'TAILWHIP', pts: 280, targetAngle:  Math.PI * 2,   rotSpeed:  0.28, color: '#22d3ee', style: 'flip' },
+      { key: 'KeyX',  name: 'BARSPIN',  pts: 400, targetAngle:  Math.PI * 2,   rotSpeed:  0.27, color: '#fbbf24', style: 'spin' },
+      { key: 'KeyC',  name: 'SUPERMAN', pts: 380, targetAngle: -Math.PI * 1.0, rotSpeed: -0.20, color: '#f43f7e', style: 'grab' },
+      { key: 'Space', name: 'BACKFLIP', pts: 650, targetAngle: -Math.PI * 2,   rotSpeed: -0.34, color: '#8b5cf6', style: 'super' }
+    ]
+  },
+  scooter: {
+    id: 'scooter',
+    name: 'Patinete',
+    icon: '🛴',
+    tagline: 'Ágil & Combo Rápido',
+    tip: 'Pulo ágil e manobras 25% mais rápidas para encadear combos fáceis!',
+    speedMult: 0.98,
+    accelMult: 1.08,
+    jumpMult: 1.07,
+    rampBoostMult: 1.04,
+    trickSpeedMult: 1.25,
+    grindScoreMult: 1.20,
+    landingSoftness: 1.05,
+    airDoubleJump: false,
+    stats: { velocidade: 'Ágil', salto: 'Muito Alto', manobras: 'Ultra Rápidas' },
+    touchLabels: ['WHIP', 'BAR', 'GRAB'],
+    grindLabel: 'DECK GRIND!',
+    tricks: [
+      { key: 'KeyZ',  name: 'TAILWHIP',  pts: 250, targetAngle:  Math.PI * 2,   rotSpeed:  0.40, color: '#22d3ee', style: 'flip' },
+      { key: 'KeyX',  name: 'BARSPIN',   pts: 380, targetAngle:  Math.PI * 2,   rotSpeed:  0.38, color: '#fbbf24', style: 'spin' },
+      { key: 'KeyC',  name: 'NO-HANDER', pts: 350, targetAngle: -Math.PI * 1.0, rotSpeed: -0.28, color: '#f43f7e', style: 'grab' },
+      { key: 'Space', name: 'BRI FLIP',  pts: 600, targetAngle:  Math.PI * 2,   rotSpeed:  0.46, color: '#8b5cf6', style: 'super' }
+    ]
+  },
+  skates: {
+    id: 'skates',
+    name: 'Patins',
+    icon: '🛼',
+    tagline: 'Veloz + Pulo Duplo',
+    tip: 'Acelera rápido, tem Pulo Duplo no ar e pontuação máxima no Soul Grind!',
+    speedMult: 1.06,
+    accelMult: 1.18,
+    jumpMult: 0.96,
+    rampBoostMult: 1.02,
+    trickSpeedMult: 1.08,
+    grindScoreMult: 1.30,
+    landingSoftness: 1.08,
+    airDoubleJump: true,
+    stats: { velocidade: 'Veloz', salto: 'Pulo Duplo', manobras: 'Soul Grind' },
+    touchLabels: ['MUTE', '360°', 'SOUL'],
+    grindLabel: 'SOUL GRIND!',
+    tricks: [
+      { key: 'KeyZ',  name: 'MUTE GRAB',  pts: 260, targetAngle:  Math.PI * 2,   rotSpeed:  0.34, color: '#22d3ee', style: 'flip' },
+      { key: 'KeyX',  name: '360° SPIN',  pts: 400, targetAngle:  Math.PI * 2,   rotSpeed:  0.32, color: '#fbbf24', style: 'spin' },
+      { key: 'KeyC',  name: 'SOUL GRAB',  pts: 360, targetAngle: -Math.PI * 1.0, rotSpeed: -0.24, color: '#f43f7e', style: 'grab' },
+      { key: 'Space', name: 'MISTY FLIP', pts: 620, targetAngle:  Math.PI * 2,   rotSpeed:  0.40, color: '#8b5cf6', style: 'super' }
+    ]
+  }
+};
+
 class Player {
   constructor() {
     this.reset();
@@ -52,8 +146,16 @@ class Player {
     this.x = PHYS.HOME_X;
     this.vy = 0;
 
-    this.speed = PHYS.BASE_SPEED;
+    // Esporte ativo (skate, bmx, scooter, skates)
+    const initialSport = (window.game && window.game.selectedSport) || this.sportId || 'skate';
+    this.sportId = 'skate';
+    this.sport = SPORTS.skate;
+    this.baseSpeed = PHYS.BASE_SPEED;
     this.maxSpeed = PHYS.MAX_SPEED;
+    this.speed = PHYS.BASE_SPEED;
+    this.doubleJumpAvailable = false;
+    this.setSport(initialSport);
+    this.speed = this.baseSpeed;
     this.speedNormalized = this.speed / this.maxSpeed;
     this.isAccelerating = false;
     this.isPushing = false;
@@ -138,11 +240,29 @@ class Player {
     this.airHeight = 0;
   }
 
+  setSport(sportId) {
+    const s = SPORTS[sportId] || SPORTS.skate;
+    this.sportId = s.id;
+    this.sport = s;
+    this.baseSpeed = PHYS.BASE_SPEED * (s.speedMult || 1);
+    this.maxSpeed = PHYS.MAX_SPEED * (s.speedMult || 1);
+    if (!this.speed || this.speed < this.baseSpeed) {
+      this.speed = this.baseSpeed;
+    } else if (this.speed > this.maxSpeed * 1.35) {
+      this.speed = this.maxSpeed * 1.35;
+    }
+    this.speedNormalized = this.speed / this.maxSpeed;
+    this.doubleJumpAvailable = !!s.airDoubleJump;
+    return s;
+  }
+
   emitEvent(type, data = {}) {
     this.frameEvents.push({
       type,
       intensity: data.intensity !== undefined ? data.intensity : 1,
       boosted: !!data.boosted,
+      doubleJump: !!data.doubleJump,
+      sportId: this.sportId || 'skate',
       surfaceType: data.surfaceType || this.surfaceType || 'asphalt',
       x: data.x !== undefined ? data.x : this.x + this.width * 0.5,
       y: data.y !== undefined ? data.y : this.bottom
@@ -230,7 +350,7 @@ class Player {
 
     if (window.soundSystem) {
       if (window.soundSystem.updateRoll) {
-        window.soundSystem.updateRoll(this.onGround && !this.isGrinding && !this.isOnRamp, this.speedNormalized, this.surfaceType);
+        window.soundSystem.updateRoll(this.onGround && !this.isGrinding && !this.isOnRamp, this.speedNormalized, this.surfaceType, this.sportId);
       }
       if (window.soundSystem.updateGrind) {
         window.soundSystem.updateGrind(this.isGrinding, this.grindIntensity);
@@ -379,17 +499,18 @@ class Player {
         window.particleSystem.emitTurboTrail(this.x + 10, this.y + this.getCurrentHeight() * 0.55);
       }
     } else if (this.isAccelerating) {
-      // Remada forte no skate! Aceleração com cadência rítmica e até 135% da velocidade máxima
+      // Remada/impulso forte! Aceleração com cadência rítmica e até 135% da velocidade máxima
       const fastMax = this.maxSpeed * 1.35;
+      const accelMult = (this.sport && this.sport.accelMult) || 1;
       const pushingGround = this.onGround && !this.isGrinding && !this.isOnRamp && !this.isDucking;
       this.isPushing = pushingGround;
-      let accel = 0.08;
+      let accel = 0.08 * accelMult;
       if (pushingGround) {
         const prevPhase = this.pushPhase;
         this.pushPhase = (this.pushPhase + 1 / 24) % 1;
         // Pico de impulso da remada no início do ciclo
         if (this.pushPhase < prevPhase || prevPhase === 0) {
-          accel += 0.14;
+          accel += 0.14 * accelMult;
           this.squashVel -= 0.018;
           this.emitEvent('push', { intensity: Math.min(1, this.speed / this.maxSpeed) });
           if (window.soundSystem && window.soundSystem.playPush) window.soundSystem.playPush();
@@ -412,8 +533,9 @@ class Player {
     } else if (this.isBraking) {
       this.isPushing = false;
       this.pushPhase = 0;
-      this.speed = Math.max(PHYS.BASE_SPEED, this.speed - PHYS.BRAKE_DECEL);
-      if (this.onGround && !this.isGrinding && this.speed > PHYS.BASE_SPEED + 0.4 && Math.random() < 0.35) {
+      const minSpd = this.baseSpeed || PHYS.BASE_SPEED;
+      this.speed = Math.max(minSpd, this.speed - PHYS.BRAKE_DECEL);
+      if (this.onGround && !this.isGrinding && this.speed > minSpd + 0.4 && Math.random() < 0.35) {
         if (window.particleSystem && window.particleSystem.emitSlideDust) {
           window.particleSystem.emitSlideDust(this.x + this.width * 0.3, this.bottom);
         } else if (window.particleSystem && window.particleSystem.emitWheelDust) {
@@ -423,11 +545,12 @@ class Player {
     } else {
       this.isPushing = false;
       this.pushPhase = 0;
+      const accelMult = (this.sport && this.sport.accelMult) || 1;
       // Se estava acima da velocidade normal após soltar a seta, desacelera suavemente
       if (this.speed > this.maxSpeed) {
         this.speed = Math.max(this.maxSpeed, this.speed - 0.06);
       } else {
-        this.speed = Math.min(this.maxSpeed, this.speed + PHYS.ACCELERATION);
+        this.speed = Math.min(this.maxSpeed, this.speed + PHYS.ACCELERATION * accelMult);
       }
     }
   }
@@ -477,7 +600,8 @@ class Player {
     const tapped = tapUp || tapW || tapSpace;
 
     // Borda de descida OU toque curto capturado entre dois passos
-    if ((pressed && !this.jumpHeld) || tapped) {
+    const freshPress = (pressed && !this.jumpHeld) || tapped;
+    if (freshPress) {
       this.jumpBuffer = PHYS.BUFFER_STEPS;
     }
     this.jumpHeld = pressed;
@@ -492,19 +616,44 @@ class Player {
 
     // Coyote time + buffer: o salto sai mesmo com timing imperfeito
     const canJump = this.onGround || this.coyoteTimer > 0;
+    const jumpMult = (this.sport && this.sport.jumpMult) || 1;
     if (this.jumpBuffer > 0 && canJump && !this.isDucking) {
       const fromGrind = this.isGrinding;
-      const jumpVel = fromGrind ? PHYS.GRIND_JUMP_VEL : PHYS.JUMP_VELOCITY;
+      const jumpVel = (fromGrind ? PHYS.GRIND_JUMP_VEL : PHYS.JUMP_VELOCITY) * jumpMult;
       const surf = this.surfaceType;
       this.jump(jumpVel, { keepCombo: fromGrind, jumpedWithSpace: heldSpace || tapSpace });
       this.jumpBuffer = 0;
       this.emitEvent('jump', { intensity: fromGrind ? 1.1 : 1, surfaceType: surf });
-      if (window.soundSystem && window.soundSystem.playJump) window.soundSystem.playJump();
+      if (window.soundSystem && window.soundSystem.playJump) window.soundSystem.playJump(this.sportId);
       if (window.particleSystem) {
         if (window.particleSystem.emitOlliePop) {
           window.particleSystem.emitOlliePop(this.x + this.width * 0.25, this.bottom);
         } else if (window.particleSystem.emitLandingDust) {
           window.particleSystem.emitLandingDust(this.x + this.width * 0.5, this.bottom, 8);
+        }
+      }
+    } else if (freshPress && !canJump && !this.onGround && this.sport && this.sport.airDoubleJump && this.doubleJumpAvailable) {
+      // Pulo Duplo exclusivo dos Patins!
+      this.doubleJumpAvailable = false;
+      this.vy = PHYS.JUMP_VELOCITY * 0.84;
+      this.airSteps = 0;
+      this.isFastFalling = false;
+      this.jumpBuffer = 0;
+      this.spaceAirArmed = false; // Space deu o 2º salto primeiro; próximo toque faz manobra
+      this.squash = 1.18;
+      this.squashVel = 0.04;
+      this.olliePopTimer = 12;
+      this.emitEvent('jump', { intensity: 1.05, doubleJump: true, surfaceType: 'air' });
+      if (window.soundSystem && window.soundSystem.playJump) window.soundSystem.playJump(this.sportId);
+      if (window.particleSystem) {
+        if (window.particleSystem.emitShockwave) {
+          window.particleSystem.emitShockwave(this.x + this.width * 0.5, this.bottom, '#22d3ee', 54);
+        }
+        if (window.particleSystem.emitSparks) {
+          window.particleSystem.emitSparks(this.x + this.width * 0.5, this.bottom, 10, '#22d3ee');
+        }
+        if (window.particleSystem.addFloatingText) {
+          window.particleSystem.addFloatingText('PULO DUPLO!', this.x + this.width * 0.5, this.y - 48, '#22d3ee', 20);
         }
       }
     }
@@ -608,9 +757,10 @@ class Player {
     }
 
     const speedRatio = Math.max(0, Math.min(1.4, this.speed / this.maxSpeed));
-    let launchVy = -(17.6 + speedRatio * 2.8);
+    const rampMult = (this.sport && this.sport.rampBoostMult) || 1;
+    let launchVy = -(17.6 + speedRatio * 2.8) * rampMult;
     if (boosted) {
-      launchVy -= 2.1;
+      launchVy -= 2.1 * rampMult;
       this.score += 250;
     }
 
@@ -648,11 +798,14 @@ class Player {
 
   handleAirTricks(keys) {
     if (this.trickState || !keys) return;
+    const tricks = (this.sport && this.sport.tricks) || TRICKS;
 
-    for (const t of TRICKS) {
+    for (const t of tricks) {
       if (this.tricksInAir.includes(t.name)) continue;
 
       if (t.key === 'Space') {
+        // Nos Patins, Space no ar prioriza o pulo duplo se ainda disponível
+        if (this.sport && this.sport.airDoubleJump && this.doubleJumpAvailable) continue;
         // Exige soltar o Espaço do pulo e dar novo toque no ar
         if (!this.spaceAirArmed) continue;
         if (Player.tapped(keys, 'Space') || Player.held(keys, 'Space')) {
@@ -771,7 +924,7 @@ class Player {
     } else if (this.isOnRamp) {
       // Saiu de uma rampa antes de marcar used (ex: rampa rolou para trás)
       const prevRamp = this.currentRamp;
-      if (prevRamp && !prevRamp.used && this.rampProgress >= 0.65) {
+      if (prevRamp && !prevRamp.used && this.rampProgress >= 0.65 && Math.abs(bottom - prevRamp.y) <= 60) {
         this.launchFromRamp(prevRamp);
         return;
       }
@@ -916,20 +1069,23 @@ class Player {
         this.comboMultiplier = Math.max(this.comboMultiplier + 1, this.tricksInAir.length + 1);
       }
       this.bestCombo = Math.max(this.bestCombo, this.comboMultiplier);
-      this.lastTrickName = 'GRIND';
+      const grindLabel = (this.sport && this.sport.grindLabel) || 'GRIND!';
+      this.lastTrickName = grindLabel.replace('!', '');
       this.trickState = null;
       this.trickProgress = 0;
       this.rotation = 0;
+      this.doubleJumpAvailable = !!(this.sport && this.sport.airDoubleJump);
 
       this.emitEvent('grind_start', { intensity: this.grindIntensity, surfaceType: this.surfaceType, y: top });
       if (window.particleSystem && window.particleSystem.addFloatingText) {
         const combo = this.comboMultiplier > 1 ? ` x${this.comboMultiplier}` : '';
-        window.particleSystem.addFloatingText(`GRIND!${combo}`, this.x + this.width * 0.5, this.y - 54, '#22d3ee', 24);
+        window.particleSystem.addFloatingText(`${grindLabel}${combo}`, this.x + this.width * 0.5, this.y - 54, '#22d3ee', 24);
       }
     }
 
     this.grindTicks++;
-    const pts = Math.max(2, Math.round(this.speed * 0.45 * this.comboMultiplier));
+    const grindMult = (this.sport && this.sport.grindScoreMult) || 1;
+    const pts = Math.max(2, Math.round(this.speed * 0.45 * this.comboMultiplier * grindMult));
     this.score += pts;
     this.comboPoints += pts;
 
@@ -939,10 +1095,11 @@ class Player {
       this.bestCombo = Math.max(this.bestCombo, this.comboMultiplier);
     }
 
-    // Faíscas contínuas do grind
+    // Faíscas contínuas do grind (BMX Peg Grind gera faíscas extras metálicas)
+    const sparkBoost = this.sportId === 'bmx' ? 1.3 : 1;
     if (window.particleSystem) {
       if (window.particleSystem.emitGrindSparks) {
-        window.particleSystem.emitGrindSparks(this.x + this.width * 0.45, top, this.grindIntensity);
+        window.particleSystem.emitGrindSparks(this.x + this.width * 0.45, top, Math.min(1.4, this.grindIntensity * sparkBoost));
       } else if (Math.random() < 0.45 && window.particleSystem.emitSparks) {
         window.particleSystem.emitSparks(this.x + this.width * 0.45, top, 2, '#fbbf24');
       }
@@ -1021,19 +1178,25 @@ class Player {
     this.vy = 0;
     this.onGround = true;
     this.isFastFalling = false;
+    this.doubleJumpAvailable = !!(this.sport && this.sport.airDoubleJump);
     this.coyoteTimer = PHYS.COYOTE_STEPS;
     this.airSteps = 0;
     this.surfaceType = this.detectSurfaceType(platform, world);
 
     if (wasAirborne) {
-      const impactNorm = Math.max(0.08, Math.min(1, impact / PHYS.MAX_FALL));
+      const softness = (this.sport && this.sport.landingSoftness) || 1;
+      const impactNorm = Math.max(0.08, Math.min(1, (impact / PHYS.MAX_FALL) / softness));
       this.lastLandingImpact = impactNorm;
       this.landingImpact = impactNorm;
 
       // Compressão proporcional ao impacto + impulso na mola elástica
       const extraSquash = incompleteTrick ? 0.08 : 0;
-      this.squash = Math.max(0.68, 1 - impact * 0.013 - extraSquash);
-      this.squashVel = -impact * 0.0055;
+      this.squash = Math.max(0.68, 1 - (impact * 0.013) / softness - extraSquash);
+      this.squashVel = -(impact * 0.0055) / softness;
+      // BMX com suspensão macia mantém mini-embalo no pouso firme
+      if (softness > 1.15 && !incompleteTrick && impact > 8) {
+        this.speed = Math.min(this.maxSpeed * 1.15, this.speed + 0.25);
+      }
 
       if (window.particleSystem && window.particleSystem.emitLandingDust) {
         window.particleSystem.emitLandingDust(this.x + this.width * 0.5, top, Math.min(18, 5 + impact));
@@ -1073,7 +1236,7 @@ class Player {
 
       if (impact > 12 && window.game) window.game.camera.shake(Math.min(6, impact * 0.3));
       if (window.soundSystem && window.soundSystem.playLand) {
-        window.soundSystem.playLand(impactNorm, this.surfaceType);
+        window.soundSystem.playLand(impactNorm, this.surfaceType, this.sportId);
       }
     }
 
@@ -1258,9 +1421,10 @@ class Player {
 
     const cm = window.characterManager;
     const pose = this.getPose();
-    const sprite = cm.getSprite(char.id, pose);
+    const useRiderSprite = this.sportId !== 'skate' && typeof cm.getRiderSprite === 'function';
+    const sprite = useRiderSprite ? (cm.getRiderSprite(char.id, pose) || cm.getSprite(char.id, pose)) : cm.getSprite(char.id, pose);
     const prevSprite = (this.poseBlend < 1 && this.prevPose !== pose)
-      ? cm.getSprite(char.id, this.prevPose)
+      ? (useRiderSprite ? (cm.getRiderSprite(char.id, this.prevPose) || cm.getSprite(char.id, this.prevPose)) : cm.getSprite(char.id, this.prevPose))
       : null;
 
     const footY = this.bottom + this.bob;
@@ -1334,16 +1498,28 @@ class Player {
     if (this.turboTimer > 0) this.drawTurboAura(ctx, centerX, footY);
   }
 
-  /** Desenha o sprite com crossfade suave de 4-5 frames ao trocar de pose. */
+  /** Desenha o sprite com crossfade suave de 4-5 frames ao trocar de pose + equipamento do esporte. */
   paintPoseCrossfade(ctx, sprite, prevSprite, char, offsetX, footOffsetY, scaleX, scaleY, lift, baseAlpha) {
+    const isAltSport = this.sportId && this.sportId !== 'skate';
+    // Elevação sutil do personagem quando está sobre BMX ou Patins
+    const riderLiftY = this.sportId === 'bmx' ? -10 : (this.sportId === 'skates' ? -4 : (this.sportId === 'scooter' ? -2 : 0));
+
+    if (isAltSport) {
+      this.drawSportEquipmentBack(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    }
+
     if (prevSprite && prevSprite !== sprite && this.poseBlend < 1) {
       ctx.globalAlpha = baseAlpha * (1 - this.poseBlend);
-      this.paintSprite(ctx, prevSprite, char, offsetX, footOffsetY, scaleX, scaleY, lift * 0.5);
+      this.paintSprite(ctx, prevSprite, char, offsetX, footOffsetY + riderLiftY, scaleX, scaleY, lift * 0.5, isAltSport);
       ctx.globalAlpha = baseAlpha * this.poseBlend;
-      this.paintSprite(ctx, sprite, char, offsetX, footOffsetY, scaleX, scaleY, lift);
+      this.paintSprite(ctx, sprite, char, offsetX, footOffsetY + riderLiftY, scaleX, scaleY, lift, isAltSport);
       ctx.globalAlpha = baseAlpha;
     } else {
-      this.paintSprite(ctx, sprite, char, offsetX, footOffsetY, scaleX, scaleY, lift);
+      this.paintSprite(ctx, sprite, char, offsetX, footOffsetY + riderLiftY, scaleX, scaleY, lift, isAltSport);
+    }
+
+    if (isAltSport) {
+      this.drawSportEquipmentFront(ctx, offsetX, footOffsetY, scaleX, scaleY);
     }
   }
 
@@ -1352,7 +1528,7 @@ class Player {
    * Todas as poses usam a mesma escala em pixels (derivada do sprite de
    * skate), então o personagem nunca "estica" ou "encolhe" ao trocar de pose.
    */
-  paintSprite(ctx, sprite, char, offsetX, footOffsetY, scaleX = 1, scaleY = 1, lift = 0) {
+  paintSprite(ctx, sprite, char, offsetX, footOffsetY, scaleX = 1, scaleY = 1, lift = 0, clipSkateFallback = false) {
     if (!sprite) {
       // Placeholder enquanto a imagem carrega
       const w = this.width, h = this.getCurrentHeight();
@@ -1364,17 +1540,299 @@ class Player {
     const unit = window.characterManager.getSpriteScale(char.id, this.height);
     const w = sprite.width * unit * scaleX;
     const h = sprite.height * unit * scaleY;
+    const dx = offsetX - w / 2;
+    const dy = footOffsetY - h;
 
-    ctx.drawImage(sprite, offsetX - w / 2, footOffsetY - h, w, h);
+    // Se getRiderSprite não existir, recorta limpamente os 14% inferiores (prancha do skate)
+    const needsClip = clipSkateFallback && !(window.characterManager && typeof window.characterManager.getRiderSprite === 'function');
+    if (needsClip) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(dx - 8, dy - 8, w + 16, h * 0.86 + 8);
+      ctx.clip();
+    }
+
+    ctx.drawImage(sprite, dx, dy, w, h);
 
     // Clareia o sprite sem lavar as cores: uma segunda passada aditiva fraca
     if (lift > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = lift;
-      ctx.drawImage(sprite, offsetX - w / 2, footOffsetY - h, w, h);
+      ctx.drawImage(sprite, dx, dy, w, h);
       ctx.restore();
     }
+
+    if (needsClip) ctx.restore();
+  }
+
+  // ---- Equipamentos 2.5D realistas (BMX, Patinete, Patins) -----------------
+
+  drawSportEquipmentBack(ctx, offsetX, footOffsetY, scaleX, scaleY) {
+    if (this.sportId === 'bmx') {
+      this.drawBMXBack(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    } else if (this.sportId === 'scooter') {
+      this.drawScooterBack(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    }
+  }
+
+  drawSportEquipmentFront(ctx, offsetX, footOffsetY, scaleX, scaleY) {
+    if (this.sportId === 'bmx') {
+      this.drawBMXFront(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    } else if (this.sportId === 'scooter') {
+      this.drawScooterFront(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    } else if (this.sportId === 'skates') {
+      this.drawInlineSkates(ctx, offsetX, footOffsetY, scaleX, scaleY);
+    }
+  }
+
+  drawWheelSpoked(ctx, cx, cy, r, rimColor, tireColor) {
+    // Pneu de borracha
+    ctx.strokeStyle = tireColor || '#18181b';
+    ctx.lineWidth = 4.6;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Aro metálico
+    ctx.strokeStyle = rimColor || '#cbd5e1';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 2.4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 6 raios girando em wheelSpin
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.72)';
+    ctx.lineWidth = 1.1;
+    for (let i = 0; i < 6; i++) {
+      const a = this.wheelSpin + (i * Math.PI) / 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(a) * (r - 3), cy + Math.sin(a) * (r - 3));
+      ctx.stroke();
+    }
+
+    // Cubo + peg metálico de grind
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 3.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawBMXBack(ctx, ox, fy, sx, sy) {
+    ctx.save();
+    ctx.translate(ox, fy);
+    ctx.scale(sx, sy);
+
+    const rearX = -32, frontX = 34, wheelY = -17, r = 15.5;
+    // Rodas dianteira e traseira com raios girando
+    this.drawWheelSpoked(ctx, rearX, wheelY, r, '#38bdf8', '#111827');
+    this.drawWheelSpoked(ctx, frontX, wheelY, r, '#38bdf8', '#111827');
+
+    // Quadro tubular BMX (triângulo traseiro + tubo principal)
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 4.6;
+    ctx.beginPath();
+    ctx.moveTo(rearX, wheelY);
+    ctx.lineTo(-4, -18);         // movimento central (pedal)
+    ctx.lineTo(-14, -44);        // tubo do selim
+    ctx.lineTo(rearX, wheelY);   // seat stay
+    ctx.moveTo(-14, -44);
+    ctx.lineTo(22, -48);         // top tube
+    ctx.lineTo(-4, -18);         // down tube
+    ctx.stroke();
+
+    // Brilho metálico no quadro
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(-14, -44);
+    ctx.lineTo(22, -48);
+    ctx.stroke();
+
+    // Selim BMX
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.ellipse(-16, -48, 10, 3.6, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  drawBMXFront(ctx, ox, fy, sx, sy) {
+    ctx.save();
+    ctx.translate(ox, fy);
+    ctx.scale(sx, sy);
+
+    const frontX = 34, wheelY = -17;
+    // Garfo dianteiro e coluna de direção
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 4.2;
+    ctx.beginPath();
+    ctx.moveTo(frontX, wheelY);
+    ctx.lineTo(22, -48);
+    ctx.lineTo(18, -68);
+    ctx.stroke();
+
+    // Guidão BMX elevado + barra transversal
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 4.4;
+    ctx.beginPath();
+    ctx.moveTo(10, -72);
+    ctx.lineTo(26, -70);
+    ctx.stroke();
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(12, -65);
+    ctx.lineTo(24, -64);
+    ctx.stroke();
+
+    // Coroa + pedaleira central
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.arc(-4, -18, 6.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-10, -20, 12, 4);
+
+    // Pedaleiras metálicas (pegs) nos dois eixos para Peg Grind
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(-38, -19, 11, 4.2);
+    ctx.fillRect(29, -19, 11, 4.2);
+
+    ctx.restore();
+  }
+
+  drawScooterBack(ctx, ox, fy, sx, sy) {
+    ctx.save();
+    ctx.translate(ox, fy);
+    ctx.scale(sx, sy);
+
+    // 2 rodinhas de PU girando
+    const wheelXs = [-26, 28];
+    for (const wx of wheelXs) {
+      ctx.fillStyle = '#22d3ee';
+      ctx.beginPath();
+      ctx.arc(wx, -7.5, 7.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(wx, -7.5, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(wx, -7.5);
+      ctx.lineTo(wx + Math.cos(this.wheelSpin) * 5.2, -7.5 + Math.sin(this.wheelSpin) * 5.2);
+      ctx.stroke();
+    }
+
+    // Deck fino de alumínio escovado sob os tênis
+    const deckGrad = ctx.createLinearGradient(-28, -11, 28, -5);
+    deckGrad.addColorStop(0, '#94a3b8');
+    deckGrad.addColorStop(0.5, '#f1f5f9');
+    deckGrad.addColorStop(1, '#64748b');
+    ctx.fillStyle = deckGrad;
+    ctx.fillRect(-26, -11, 52, 5.5);
+
+    // Lixa preta no topo do deck
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-24, -12, 44, 2.2);
+
+    ctx.restore();
+  }
+
+  drawScooterFront(ctx, ox, fy, sx, sy) {
+    ctx.save();
+    ctx.translate(ox, fy);
+    ctx.scale(sx, sy);
+
+    // Abraçadeira neon + haste de alumínio na frente + guidão em T
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 4.2;
+    ctx.beginPath();
+    ctx.moveTo(28, -9);
+    ctx.lineTo(20, -76);
+    ctx.stroke();
+
+    // Abraçadeira colorida
+    ctx.fillStyle = '#f43f7e';
+    ctx.fillRect(21.5, -24, 6.5, 9);
+
+    // Guidão em T com manoplas emborrachadas
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 5.2;
+    ctx.beginPath();
+    ctx.moveTo(10, -76);
+    ctx.lineTo(30, -76);
+    ctx.stroke();
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(11, -76);
+    ctx.lineTo(15, -76);
+    ctx.moveTo(25, -76);
+    ctx.lineTo(29, -76);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawInlineSkates(ctx, ox, fy, sx, sy) {
+    ctx.save();
+    ctx.translate(ox, fy);
+    ctx.scale(sx, sy);
+
+    // Dois patins inline (pé traseiro e pé dianteiro) com base metálica + 4 rodinhas neon cada
+    const feet = [
+      { cx: -16, cy: -5, isBack: true },
+      { cx: 16,  cy: -4, isBack: false }
+    ];
+
+    for (const f of feet) {
+      // Base metálica (frame) sob o tênis
+      ctx.fillStyle = f.isBack ? '#94a3b8' : '#e2e8f0';
+      ctx.fillRect(f.cx - 14, f.cy - 6.5, 28, 4.2);
+
+      // Detalhe de bota/fivela esportiva sobre o tênis
+      ctx.fillStyle = f.isBack ? '#0284c7' : '#22d3ee';
+      ctx.fillRect(f.cx - 11, f.cy - 11.5, 22, 5.2);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(f.cx - 7, f.cy - 10.5, 14, 1.8);
+
+      // 4 rodinhas neon girando em wheelSpin sob cada pé!
+      for (let i = 0; i < 4; i++) {
+        const wx = f.cx - 11 + i * 7.4;
+        const wy = f.cy;
+        ctx.fillStyle = f.isBack ? '#fbbf24' : '#34d399';
+        ctx.beginPath();
+        ctx.arc(wx, wy, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(wx, wy, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(wx, wy);
+        ctx.lineTo(wx + Math.cos(this.wheelSpin) * 2.8, wy + Math.sin(this.wheelSpin) * 2.8);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
   }
 
   /** Converte cor #hex para rgba com alpha controlado (preserva rgba já formatado). */
@@ -1502,3 +1960,4 @@ class Player {
 
 window.Player = Player;
 window.PHYS = PHYS;
+window.SPORTS = SPORTS;

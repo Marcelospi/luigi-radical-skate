@@ -1,6 +1,19 @@
 # Luigi Radical Skate 🛹
 
-Jogo de skate 2D/2.5D no navegador com física realista, personagens articulados, rampas com **Lip Boost**, **Grind** em corrimãos, 4 fases temáticas, áudio procedural via Web Audio API e **Estúdio de Personagens** por foto.
+Jogo de skate e esportes radicais no navegador com **4 modos de locomoção** (🛹 **Skate**, 🚲 **Bicicleta BMX**, 🛴 **Patinete** e 🛼 **Patins**), física realista, rampas com **Lip Boost**, **Grind** em corrimãos, 4 fases temáticas, áudio procedural via Web Audio API e **Estúdio de Personagens** por foto.
+
+---
+
+## Os 4 Esportes
+
+Escolha seu estilo no menu principal (salvo automaticamente):
+
+| Esporte | Destaque | Manobras (`Z` / `X` / `C` / `Espaço`) |
+|---|---|---|
+| 🛹 **Skate** | Equilibrado e preciso | Kickflip, 360 Spin, Indy Grab, Super Flip |
+| 🚲 **Bicicleta (BMX)** | Super Rampa + pouso macio | Tailwhip, Barspin, Superman, Backflip |
+| 🛴 **Patinete** | Ágil com manobras 25% mais rápidas | Tailwhip, Barspin, No-Hander, Bri Flip |
+| 🛼 **Patins** | Veloz + **Pulo Duplo no ar** | Mute Grab, 360° Spin, Soul Grab, Misty Flip |
 
 ---
 

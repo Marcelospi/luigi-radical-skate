@@ -706,12 +706,70 @@ kbd {
 }
 
 .brandmark-sub {
-  margin-top: 16px;
+  margin-top: 12px;
   font-size: clamp(11px, 1.3vw, 13.5px);
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+/* ---- Seletor de Esporte (Menu Principal) ---- */
+.sport-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 460px;
+}
+
+.sport-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  width: 100%;
+}
+
+.sport-btn {
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 8px;
+  min-height: 62px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--text-soft);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: transform 0.16s var(--ease), border-color 0.18s, background 0.18s, box-shadow 0.2s, color 0.18s;
+}
+.sport-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 211, 238, 0.45);
+  color: #fff;
+}
+.sport-btn:active { transform: scale(0.96); }
+.sport-btn.active {
+  border-color: var(--cyan);
+  background: rgba(34, 211, 238, 0.16);
+  color: #fff;
+  box-shadow: 0 0 0 1px var(--cyan) inset, 0 8px 24px rgba(34, 211, 238, 0.24);
+}
+.sport-icon { font-size: 22px; line-height: 1; }
+.sport-name { font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em; }
+
+.sport-tagline {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--cyan);
+  text-align: center;
+  min-height: 16px;
 }
 
 /* ---- Cabeçalho de tela interna ---- */
@@ -1640,8 +1698,13 @@ kbd {
   .touch-label { font-size: 6.5px; }
 
   .screen { gap: 8px; padding: 10px 16px; }
-  .brandmark-kicker { margin-bottom: 8px; padding: 3px 12px 3px 15px; font-size: 8px; }
-  .brandmark-sub { margin-top: 8px; }
+  .brandmark-kicker { margin-bottom: 6px; padding: 3px 12px 3px 15px; font-size: 8px; }
+  .brandmark-sub { margin-top: 6px; font-size: 10px; }
+  .sport-picker { max-width: 380px; gap: 5px; }
+  .sport-btn { padding: 6px 4px; min-height: 44px; flex-direction: row; gap: 5px; }
+  .sport-icon { font-size: 16px; }
+  .sport-name { font-size: 10.5px; }
+  .sport-tagline { font-size: 10px; }
   .btn { padding: 10px 16px; font-size: 13px; }
   .btn-lg { padding: 12px 20px; font-size: 14px; }
   .menu-buttons { gap: 7px; max-width: 320px; }

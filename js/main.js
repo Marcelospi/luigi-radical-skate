@@ -9,6 +9,13 @@ const VIEW = { W: 1280, H: 720 };
 const STEP_MS = 1000 / 60;
 const MAX_STEPS_PER_FRAME = 5;
 
+const SPORT_FALLBACK = {
+  skate:   { id: 'skate',   name: 'Skate',     icon: '🛹', tagline: 'Equilibrado · Manobras clássicas e controle preciso', touchLabels: ['FLIP', '360°', 'GRAB'] },
+  bmx:     { id: 'bmx',     name: 'Bicicleta', icon: '🚲', tagline: 'Super Rampa · Voa mais alto e pouso macio',          touchLabels: ['WHIP', 'BAR', 'SUPER'] },
+  scooter: { id: 'scooter', name: 'Patinete',  icon: '🛴', tagline: 'Ágil · Manobras 25% mais rápidas para combos',       touchLabels: ['WHIP', 'BAR', 'GRAB'] },
+  skates:  { id: 'skates',  name: 'Patins',    icon: '🛼', tagline: 'Veloz · Pulo Duplo no ar e deslize suave',           touchLabels: ['MUTE', '360°', 'SOUL'] }
+};
+
 class Camera {
   constructor() {
     this.reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -171,7 +178,7 @@ class LeaderboardManager {
     }
   }
 
-  addEntry({ name, score, distance, characterName, characterPortrait }) {
+  addEntry({ name, score, distance, characterName, characterPortrait, sportId, sportIcon }) {
     const list = this.getAll();
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -187,6 +194,8 @@ class LeaderboardManager {
       distance: Math.max(0, Math.floor(distance)),
       characterName: characterName || 'Luigi',
       characterPortrait: characterPortrait || 'assets/portraits/portrait_luigi_3d.png',
+      sportId: sportId || 'skate',
+      sportIcon: sportIcon || '🛹',
       date: `${day}/${month}/${year}`,
       time: `${hours}:${minutes}`,
       timestamp: Date.now()
@@ -228,6 +237,9 @@ class Game {
 
     this.world = new window.GameWorld();
     this.player = new window.Player();
+    this.selectedSport = readText('luigi_skate_selected_sport', 'skate');
+    if (!this.getSportInfo(this.selectedSport)) this.selectedSport = 'skate';
+    if (this.player.setSport) this.player.setSport(this.selectedSport);
     this.player.reset(this.world);   // sem isto o personagem flutua no menu
     this.camera = new Camera();
 
@@ -448,7 +460,62 @@ class Game {
     });
 
     this.syncMuteButton();
+    this.initSportSelector();
     this.initCreator();
+  }
+
+  getSportInfo(sportId) {
+    const id = sportId || this.selectedSport || 'skate';
+    const src = (window.SPORTS && window.SPORTS[id]) || SPORT_FALLBACK[id] || SPORT_FALLBACK.skate;
+    const fb = SPORT_FALLBACK[id] || SPORT_FALLBACK.skate;
+    return {
+      ...fb,
+      ...src,
+      tagline: src.tagline || fb.tagline,
+      touchLabels: src.touchLabels || fb.touchLabels
+    };
+  }
+
+  initSportSelector() {
+    const buttons = document.querySelectorAll('#sport-selector .sport-btn');
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.selectSport(btn.dataset.sport || 'skate', true);
+      });
+    });
+    this.selectSport(this.selectedSport, false);
+  }
+
+  selectSport(sportId, save = true) {
+    const sport = this.getSportInfo(sportId);
+    this.selectedSport = sport.id;
+    if (save) {
+      try { localStorage.setItem('luigi_skate_selected_sport', sport.id); } catch (_) {}
+    }
+    if (this.player && this.player.setSport) {
+      this.player.setSport(sport.id);
+    }
+
+    document.querySelectorAll('#sport-selector .sport-btn').forEach(btn => {
+      const active = btn.dataset.sport === sport.id;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    const taglineEl = document.getElementById('sport-tagline');
+    if (taglineEl) taglineEl.textContent = sport.tagline;
+
+    const playIcon = document.getElementById('btn-play-icon');
+    if (playIcon) playIcon.textContent = sport.icon;
+
+    // Atualiza os rótulos dos botões touch de manobra conforme o esporte
+    const labels = sport.touchLabels || ['FLIP', '360°', 'GRAB'];
+    ['touch-trick-1-label', 'touch-trick-2-label', 'touch-trick-3-label'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      if (el && labels[i]) el.textContent = labels[i];
+    });
   }
 
   toggleMute() {
@@ -650,6 +717,7 @@ class Game {
 
   startPlay() {
     this.world.reset();
+    if (this.player.setSport) this.player.setSport(this.selectedSport);
     this.player.reset(this.world);
     this.camera.reset();
     window.particleSystem.clear();
@@ -729,12 +797,15 @@ class Game {
     try { localStorage.setItem('luigi_skate_last_player_name', name); } catch (_) {}
 
     const char = window.characterManager.getSelected();
+    const sport = this.getSportInfo(this.selectedSport);
     const entry = this.leaderboard.addEntry({
       name,
       score: p.score,
       distance: p.distance,
       characterName: char ? char.name : 'Luigi',
-      characterPortrait: char ? (char.portrait || char.sprites.skate) : 'assets/portraits/portrait_luigi_3d.png'
+      characterPortrait: char ? (char.portrait || char.sprites.skate) : 'assets/portraits/portrait_luigi_3d.png',
+      sportId: sport.id,
+      sportIcon: sport.icon
     });
 
     if (this.el.registerFeedback) {
@@ -812,7 +883,7 @@ class Game {
               <span class="leader-name">${escapeHtml(item.name)} ${index === 0 ? '<span title="Campeão">👑</span>' : ''}</span>
               <div class="leader-meta">
                 <span>📅 ${escapeHtml(item.date)} às ${escapeHtml(item.time)}</span>
-                <span>• ${escapeHtml(item.characterName)}</span>
+                <span>• ${escapeHtml(item.sportIcon || '🛹')} ${escapeHtml(item.characterName)}</span>
               </div>
             </div>
           </div>
@@ -879,14 +950,16 @@ class Game {
       else this.wrapper.dataset.speedFx = speedFx;
     }
 
-    // Vidas (suporte a até 5 skates)
+    // Vidas (suporte a até 5 vidas com ícone do esporte ativo)
     const lives = Math.max(0, p.lives);
     const maxLives = p.maxLives || 5;
-    if (this.hudCache.lives !== lives) {
-      this.hudCache.lives = lives;
+    const lifeIcon = this.getSportInfo(this.selectedSport).icon || '🛹';
+    const livesKey = `${lives}:${lifeIcon}`;
+    if (this.hudCache.lives !== livesKey) {
+      this.hudCache.lives = livesKey;
       let html = '';
       for (let i = 0; i < maxLives; i++) {
-        html += `<span class="${i < lives ? '' : 'life-lost'}">🛹</span>`;
+        html += `<span class="${i < lives ? '' : 'life-lost'}">${lifeIcon}</span>`;
       }
       this.el.lives.innerHTML = html;
     }

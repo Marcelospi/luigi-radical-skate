@@ -128,9 +128,9 @@
         </button>
       </div>
       <div class="touch-cluster touch-cluster--tricks">
-        <button id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra Kickflip"><span class="touch-glyph">Z</span><span class="touch-label">FLIP</span></button>
-        <button id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra Giro 360"><span class="touch-glyph">X</span><span class="touch-label">360°</span></button>
-        <button id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra Indy Grab"><span class="touch-glyph">C</span><span class="touch-label">GRAB</span></button>
+        <button id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra 1"><span class="touch-glyph">Z</span><span id="touch-trick-1-label" class="touch-label">FLIP</span></button>
+        <button id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra 2"><span class="touch-glyph">X</span><span id="touch-trick-2-label" class="touch-label">360°</span></button>
+        <button id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra 3"><span class="touch-glyph">C</span><span id="touch-trick-3-label" class="touch-label">GRAB</span></button>
       </div>
     </div>
 
@@ -149,14 +149,37 @@
     <!-- ================= TELA: MENU ================= -->
     <section id="screen-menu" class="screen hidden">
       <div class="brandmark">
-        <span class="brandmark-kicker">Skate Arcade</span>
+        <span class="brandmark-kicker">Arcade Radical</span>
         <h1 class="brandmark-title"><span>LUIGI</span><b>RADICAL</b></h1>
-        <p class="brandmark-sub">Manobras aéreas &middot; Pistas que desabam &middot; Velocidade máxima</p>
+        <p class="brandmark-sub">Skate &middot; Bicicleta &middot; Patinete &middot; Patins</p>
+      </div>
+
+      <!-- Seletor de esporte (4 modos de locomoção) -->
+      <div class="sport-picker" role="radiogroup" aria-label="Escolha o esporte">
+        <div id="sport-selector" class="sport-grid">
+          <button type="button" class="sport-btn active" data-sport="skate" aria-pressed="true">
+            <span class="sport-icon">🛹</span>
+            <span class="sport-name">Skate</span>
+          </button>
+          <button type="button" class="sport-btn" data-sport="bmx" aria-pressed="false">
+            <span class="sport-icon">🚲</span>
+            <span class="sport-name">Bicicleta</span>
+          </button>
+          <button type="button" class="sport-btn" data-sport="scooter" aria-pressed="false">
+            <span class="sport-icon">🛴</span>
+            <span class="sport-name">Patinete</span>
+          </button>
+          <button type="button" class="sport-btn" data-sport="skates" aria-pressed="false">
+            <span class="sport-icon">🛼</span>
+            <span class="sport-name">Patins</span>
+          </button>
+        </div>
+        <p id="sport-tagline" class="sport-tagline">Equilibrado &middot; Manobras clássicas e controle preciso</p>
       </div>
 
       <nav class="menu-buttons">
         <button id="btn-play" class="btn btn-primary btn-lg">
-          <span class="btn-icon">🛹</span> Jogar agora
+          <span id="btn-play-icon" class="btn-icon">🛹</span> Jogar agora
           <span class="btn-hint">Enter</span>
         </button>
         <div class="menu-row">
@@ -271,8 +294,8 @@
 
         <article class="instruction">
           <div class="instruction-keys"><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd></div>
-          <h3>Manobras aéreas</h3>
-          <p>Kickflip, Giro 360° e Indy Grab. Encadeie várias no mesmo salto para multiplicar os pontos ao pousar limpo.</p>
+          <h3>Manobras e 4 Esportes</h3>
+          <p>Cada esporte tem manobras e estilo próprios: <b>Skate</b> equilibrado, <b>Bicicleta</b> voa mais alto nas rampas, <b>Patinete</b> faz combos 25% mais rápidos e <b>Patins</b> tem <b>Pulo Duplo</b> no ar!</p>
         </article>
 
         <article class="instruction">

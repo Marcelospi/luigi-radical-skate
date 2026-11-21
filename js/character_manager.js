@@ -11,12 +11,22 @@ const SKATER_FACE_SLOTS = {
   trick: { cx: 0.332, cy: 0.276, rx: 0.090, ry: 0.084, rot: -0.45 }
 };
 
+// Linhas de corte abaixo dos solados dos tênis para remover apenas a prancha/rodas
+// do skate quando o jogador escolhe Bicicleta (BMX), Patinete ou Patins.
+const SKATE_CUT_LINES = {
+  skate: { x1: 0.22, y1: 0.94, x2: 0.96, y2: 0.60 },
+  duck:  { x1: 0.22, y1: 0.94, x2: 0.96, y2: 0.60 },
+  jump:  { x1: 0.18, y1: 0.85, x2: 0.86, y2: 0.66 },
+  trick: { x1: 0.48, y1: 0.92, x2: 0.90, y2: 0.44 }
+};
+
 class CharacterManager {
   constructor() {
     this.characters = [];
     this.selectedId = 'luigi_3d';
     this.loadedImages = {};
     this.loadedHeads = {};
+    this.riderCache = {};
     this.scaleCache = {};
   }
 
@@ -152,6 +162,51 @@ class CharacterManager {
 
   getSprite(charId, pose) {
     return (this.loadedImages[charId] && this.loadedImages[charId][pose]) || null;
+  }
+
+  /**
+   * Retorna versão em cache do sprite sem a prancha/rodas do skate na base
+   * (preservando os tênis) para acoplar Bicicleta (BMX), Patinete ou Patins.
+   */
+  getRiderSprite(charId, pose) {
+    const base = this.getSprite(charId, pose);
+    if (!base) return null;
+
+    const char = this.getCharacter(charId);
+    // Personagens em modo foto inteira não têm a prancha ilustrada padrão
+    if (char && char.bodyMode === 'fullphoto') return base;
+
+    const key = charId + ':' + pose;
+    if (this.riderCache[key]) return this.riderCache[key];
+
+    const cut = SKATE_CUT_LINES[pose] || SKATE_CUT_LINES.skate;
+    try {
+      const w = base.naturalWidth || base.width;
+      const h = base.naturalHeight || base.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(base, 0, 0, w, h);
+
+      // Remove apenas a área diagonal abaixo dos solados dos tênis (prancha + trucks + rodinhas)
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      ctx.lineTo(0, cut.y1 * h);
+      ctx.lineTo(cut.x1 * w, cut.y1 * h);
+      ctx.lineTo(cut.x2 * w, cut.y2 * h);
+      ctx.lineTo(w, cut.y2 * h);
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      ctx.fill();
+
+      this.riderCache[key] = canvas;
+      return canvas;
+    } catch (_) {
+      return base;
+    }
   }
 
   getHeadImage(charId) {
@@ -314,6 +369,7 @@ class CharacterManager {
               ? 'Seu rosto no corpo oficial de skatista com manobras radicais!'
               : 'Personagem personalizado criado com sua foto na pista do Luigi!',
             isCustom: true,
+            bodyMode,
             renderMode: 'sprite',
             portrait: sprites.portrait,
             sprites: {
@@ -424,6 +480,9 @@ class CharacterManager {
     this.characters = this.characters.filter(c => c.id !== id);
     delete this.loadedImages[id];
     delete this.loadedHeads[id];
+    for (const k of Object.keys(this.riderCache)) {
+      if (k.startsWith(id + ':')) delete this.riderCache[k];
+    }
     this.scaleCache = {};
     this.saveCustomCharacters();
 
