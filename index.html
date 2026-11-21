@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#070812">
+  <title>Luigi Radical Skate</title>
+
+  <!-- Instalável no celular: abre em tela cheia, sem a barra do navegador -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Luigi Skate">
+  <link rel="apple-touch-icon" href="assets/portraits/portrait_luigi_3d.png">
+  <meta name="description" content="Jogo de skate 2D estrelando o Luigi em versão realista e versão 3D, com manobras aéreas, pistas que desabam e mega rampas.">
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070812'/%3E%3Crect x='4' y='13' width='24' height='4' rx='2' fill='%2322d3ee'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23f43f7e'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23f43f7e'/%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div id="game-wrapper" data-state="LOADING">
+
+    <!-- Canvas de renderização principal -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Camadas de efeito sobre o canvas -->
+    <div id="screen-flash" aria-hidden="true"></div>
+    <div id="vignette" aria-hidden="true"></div>
+
+    <!-- ================= HUD DE JOGO ================= -->
+    <header id="hud">
+      <div class="hud-side">
+        <div class="hud-chip hud-lives-chip">
+          <span class="hud-chip-label">Vidas</span>
+          <span id="hud-lives" class="hud-lives" aria-label="Vidas restantes"></span>
+        </div>
+        <div class="hud-chip hud-stage-chip">
+          <span class="hud-chip-icon" id="hud-stage-icon">🌇</span>
+          <div class="hud-stage-meta">
+            <span class="hud-stage-title" id="hud-stage-title">Fase 1: Skatepark</span>
+            <div class="hud-stage-progress-track">
+              <i id="hud-stage-progress-fill"></i>
+            </div>
+          </div>
+        </div>
+        <div class="hud-chip">
+          <span class="hud-chip-label">Distância</span>
+          <span class="hud-num"><span id="hud-distance">0</span><i>m</i></span>
+        </div>
+        <div id="hud-speed-chip" class="hud-chip hud-speed-chip">
+          <span class="hud-chip-label">Vel.</span>
+          <div class="hud-speed-meta">
+            <span class="hud-num"><span id="hud-speed">0</span><i>km/h</i></span>
+            <div class="hud-speed-track">
+              <i id="hud-speed-bar"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-side hud-side-right">
+        <div class="hud-chip hud-chip--gold">
+          <span class="hud-chip-icon">🪙</span>
+          <span id="hud-coins" class="hud-num">0</span>
+        </div>
+        <div class="hud-chip hud-chip--score">
+          <span class="hud-chip-label">Pontos</span>
+          <span id="hud-score" class="hud-num">0</span>
+        </div>
+        <div class="hud-chip hud-chip--ghost">
+          <span class="hud-chip-label">Recorde</span>
+          <span id="hud-highscore" class="hud-num">0</span>
+        </div>
+        <div class="hud-actions">
+          <button id="btn-mute-hud" class="icon-btn" title="Ligar / desligar som" aria-label="Ligar ou desligar som">🔊</button>
+          <button id="btn-pause-hud" class="icon-btn" title="Pausar (P)" aria-label="Pausar jogo">❚❚</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Banner triunfal de passagem de fase -->
+    <div id="stage-banner" class="stage-banner" aria-hidden="true">
+      <div class="stage-banner-box">
+        <span id="stage-banner-icon" class="stage-banner-icon">🎉</span>
+        <span class="stage-banner-text">
+          <span id="stage-banner-title" class="stage-banner-title">NOVA FASE DESBLOQUEADA!</span>
+          <span id="stage-banner-name" class="stage-banner-name">Metrópole Cyberpunk Neon</span>
+        </span>
+        <span class="stage-banner-reward">🛹 +1 &nbsp;·&nbsp; +1.000 pts</span>
+      </div>
+    </div>
+
+    <!-- Medidores de turbo e escudo -->
+    <div id="status-bar" class="status-bar" aria-hidden="true">
+      <div id="turbo-meter" class="meter meter--turbo"><i></i><span>TURBO</span></div>
+      <div id="shield-meter" class="meter meter--shield"><i></i><span>ESCUDO</span></div>
+    </div>
+
+    <!-- Contador de combo e grind -->
+    <div id="combo-display" class="combo-display" aria-hidden="true">
+      <span id="combo-multiplier" class="combo-mult">x2</span>
+      <span id="combo-action" class="combo-action">COMBO</span>
+      <span id="combo-points" class="combo-points" hidden>+0 pts</span>
+    </div>
+
+    <!-- Dica rápida no início da partida -->
+    <div id="run-hint" class="run-hint" aria-hidden="true">
+      <kbd>&rarr;</kbd> remar <em>/</em> <kbd>&larr;</kbd> frear <em>/</em> <kbd>Espaço</kbd> pular <em>/</em> <kbd>S</kbd> abaixar ou descer rápido <em>/</em> <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> manobras
+    </div>
+
+    <!-- ================= CONTROLES DE TOQUE ================= -->
+    <div id="touch-controls">
+      <div class="touch-cluster">
+        <button id="touch-accelerate" class="touch-btn touch-btn--speed" aria-label="Acelerar e remar">
+          <span class="touch-glyph">▶▶</span><span class="touch-label">REMAR</span>
+        </button>
+        <button id="touch-duck" class="touch-btn" aria-label="Abaixar ou queda rápida">
+          <span class="touch-glyph">▼</span><span class="touch-label">ABAIXAR</span>
+        </button>
+        <button id="touch-jump" class="touch-btn touch-btn--primary" aria-label="Pular">
+          <span class="touch-glyph">▲</span><span class="touch-label">PULAR</span>
+        </button>
+      </div>
+      <div class="touch-cluster touch-cluster--tricks">
+        <button id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra Kickflip"><span class="touch-glyph">Z</span><span class="touch-label">FLIP</span></button>
+        <button id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra Giro 360"><span class="touch-glyph">X</span><span class="touch-label">360°</span></button>
+        <button id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra Indy Grab"><span class="touch-glyph">C</span><span class="touch-label">GRAB</span></button>
+      </div>
+    </div>
+
+    <!-- ================= TELA: CARREGANDO ================= -->
+    <section id="screen-loading" class="screen screen--solid">
+      <div class="loader">
+        <div class="loader-board" aria-hidden="true">
+          <span class="loader-deck"></span>
+          <span class="loader-wheel"></span>
+          <span class="loader-wheel"></span>
+        </div>
+        <p class="loader-text">Preparando a pista…</p>
+      </div>
+    </section>
+
+    <!-- ================= TELA: MENU ================= -->
+    <section id="screen-menu" class="screen hidden">
+      <div class="brandmark">
+        <span class="brandmark-kicker">Skate Arcade</span>
+        <h1 class="brandmark-title"><span>LUIGI</span><b>RADICAL</b></h1>
+        <p class="brandmark-sub">Manobras aéreas &middot; Pistas que desabam &middot; Velocidade máxima</p>
+      </div>
+
+      <nav class="menu-buttons">
+        <button id="btn-play" class="btn btn-primary btn-lg">
+          <span class="btn-icon">🛹</span> Jogar agora
+          <span class="btn-hint">Enter</span>
+        </button>
+        <div class="menu-row">
+          <button id="btn-select-char" class="btn btn-ghost"><span class="btn-icon">👤</span> Personagem</button>
+          <button id="btn-character-creator" class="btn btn-ghost"><span class="btn-icon">✨</span> Criar novo</button>
+        </div>
+        <div class="menu-row">
+          <button id="btn-leaderboard" class="btn btn-ghost"><span class="btn-icon">🏆</span> Placar de Líderes</button>
+          <button id="btn-how-to-play" class="btn btn-quiet">Como jogar</button>
+        </div>
+      </nav>
+
+      <footer class="menu-footer">
+        <div class="stat-pill"><span>Recorde</span><b id="menu-highscore">0</b></div>
+        <div class="stat-pill"><span>Jogando com</span><b id="menu-current-char">Luigi 3D</b></div>
+      </footer>
+    </section>
+
+    <!-- ================= TELA: SELEÇÃO DE PERSONAGEM ================= -->
+    <section id="screen-character-select" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title">Escolha seu skatista</h2>
+        <p class="screen-sub">Cada personagem tem seu próprio estilo na pista</p>
+      </div>
+
+      <div id="characters-list" class="character-grid"><!-- preenchido via JS --></div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar</button>
+        <button id="btn-select-and-play" class="btn btn-primary"><span class="btn-icon">🛹</span> Jogar com este</button>
+      </div>
+    </section>
+
+    <!-- ================= TELA: ESTÚDIO DE PERSONAGENS ================= -->
+    <section id="screen-character-creator" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title">Estúdio de personagens</h2>
+        <p class="screen-sub">Envie uma foto e jogue com qualquer pessoa</p>
+      </div>
+
+      <div class="creator-container">
+        <div id="creator-drop-area" class="creator-drop" tabindex="0" role="button" aria-label="Escolher uma imagem">
+          <div id="creator-upload-prompt" class="creator-prompt">
+            <div class="creator-prompt-icon">📸</div>
+            <strong>Clique ou arraste uma foto</strong>
+            <span>JPG, PNG ou WEBP &middot; foto de frente destaca melhor o rosto</span>
+          </div>
+          <img id="preview-character-img" alt="Pré-visualização do personagem montado" hidden>
+          <input type="file" id="custom-char-file" accept="image/*" hidden>
+        </div>
+
+        <div class="creator-form">
+          <div class="field">
+            <label for="custom-char-name">Nome do personagem</label>
+            <input type="text" id="custom-char-name" placeholder="Ex: Super Amigo, Papai, Luigi Ninja" maxlength="24" autocomplete="off">
+          </div>
+
+          <div class="creator-controls">
+            <label class="creator-toggle">
+              <input type="checkbox" id="custom-body-skater" checked>
+              <span>Rosto no corpo de skatista <small>(desmarque para usar a foto inteira)</small></span>
+            </label>
+            <div class="creator-slider-field">
+              <label for="custom-face-zoom">Zoom do rosto</label>
+              <input type="range" id="custom-face-zoom" min="0.85" max="1.8" step="0.05" value="1.10">
+            </div>
+            <div class="creator-slider-field">
+              <label for="custom-face-y">Altura do rosto</label>
+              <input type="range" id="custom-face-y" min="-0.25" max="0.25" step="0.02" value="0">
+            </div>
+          </div>
+
+          <div class="note">
+            <b>Como funciona</b>
+            Encaixamos seu rosto sob o capacete SK8 nas 4 poses ilustradas de skatista (ou usamos sua foto inteira se preferir). Tudo fica salvo só no seu navegador.
+          </div>
+
+          <button id="btn-save-custom-char" class="btn btn-primary">Salvar e jogar</button>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar</button>
+      </div>
+    </section>
+
+    <!-- ================= TELA: COMO JOGAR ================= -->
+    <section id="screen-how-to-play" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title">Como jogar</h2>
+        <p class="screen-sub">Comandos e desafios da pista</p>
+      </div>
+
+      <div class="instructions-grid">
+        <article class="instruction">
+          <div class="instruction-keys"><kbd>&rarr;</kbd><kbd>D</kbd> <kbd>&larr;</kbd><kbd>A</kbd></div>
+          <h3>Remar e Freio leve</h3>
+          <p>Segure para frente para remar com força e embalar o skate; segure para trás para frear de leve e acertar o tempo dos saltos.</p>
+        </article>
+
+        <article class="instruction">
+          <div class="instruction-keys"><kbd>Espaço</kbd><kbd>W</kbd><kbd>&uarr;</kbd></div>
+          <h3>Pular (Ollie)</h3>
+          <p>Salte caixas, buracos e trechos quebradiços. Segure a tecla para subir mais alto e alcançar corrimãos elevados.</p>
+        </article>
+
+        <article class="instruction">
+          <div class="instruction-keys"><kbd>S</kbd><kbd>&darr;</kbd></div>
+          <h3>Abaixar e Queda rápida</h3>
+          <p>No chão, abaixe para passar sob placas suspensas. No ar, segure para descer rápido e cravar o pouso no ponto certo.</p>
+        </article>
+
+        <article class="instruction">
+          <div class="instruction-keys"><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd></div>
+          <h3>Manobras aéreas</h3>
+          <p>Kickflip, Giro 360° e Indy Grab. Encadeie várias no mesmo salto para multiplicar os pontos ao pousar limpo.</p>
+        </article>
+
+        <article class="instruction">
+          <div class="instruction-keys"><span class="tag tag--ramp">Rampa &amp; Grind</span></div>
+          <h3>Mega salto e Corrimãos</h3>
+          <p>Suba a curva da rampa e aperte <b>Pular no topo</b> para ganhar <b>Lip Boost</b>! Pouse sobre corrimãos para fazer <b>Grind</b> com faíscas e combo!</p>
+        </article>
+
+        <article class="instruction">
+          <div class="instruction-keys"><span class="tag tag--gold">4 Fases</span></div>
+          <h3>Mudança de Cenários</h3>
+          <p>Desbloqueie 🌇 <b>Skatepark</b> (0m), 🏙️ <b>Metrópole Neon</b> (600m), 🌴 <b>Praia &amp; Píer</b> (1400m) e 🚀 <b>Pista Cósmica</b> (2400m) ganhando +1 skate e +1.000 pts!</p>
+        </article>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar</button>
+      </div>
+    </section>
+
+    <!-- ================= TELA: PAUSA ================= -->
+    <section id="screen-pause" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title">Pausado</h2>
+        <p class="screen-sub">Respire fundo, a pista continua aí</p>
+      </div>
+      <nav class="menu-buttons">
+        <button id="btn-resume" class="btn btn-primary btn-lg">Continuar <span class="btn-hint">P</span></button>
+        <button id="btn-pause-menu" class="btn btn-quiet">Sair para o menu</button>
+      </nav>
+    </section>
+
+    <!-- ================= TELA: FIM DE JOGO ================= -->
+    <section id="screen-game-over" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title screen-title--danger">Fim da linha</h2>
+        <p class="screen-sub" id="gameover-reason">Boa sessão de skate!</p>
+      </div>
+
+      <div id="new-record-banner" class="record-banner" hidden>🏆 Novo recorde</div>
+
+      <div class="result-grid">
+        <div class="result-card result-card--primary">
+          <span class="result-label">Pontos</span>
+          <b id="final-score" class="result-value">0</b>
+        </div>
+        <div class="result-card">
+          <span class="result-label">Distância</span>
+          <b id="final-distance" class="result-value">0m</b>
+        </div>
+        <div class="result-card result-card--gold">
+          <span class="result-label">Moedas</span>
+          <b id="final-coins" class="result-value">0</b>
+        </div>
+        <div class="result-card">
+          <span class="result-label">Melhor combo</span>
+          <b id="final-combo" class="result-value">x1</b>
+        </div>
+      </div>
+
+      <!-- Registro de Nome para o Placar -->
+      <div id="gameover-register-box" class="score-register-box">
+        <h3 class="register-title">🛹 Registre seu Nome no Placar!</h3>
+        <form id="form-save-score" class="register-input-group" onsubmit="event.preventDefault();">
+          <input type="text" id="leaderboard-name-input" class="register-input" maxlength="15" placeholder="Digite seu nome (ex: Luigi)" autocomplete="off">
+          <button type="submit" id="btn-save-score" class="btn btn-primary"><span class="btn-icon">⭐</span> Gravar Pontuação</button>
+        </form>
+        <p id="register-feedback" class="register-feedback" hidden>🎉 Pontuação salva com sucesso!</p>
+      </div>
+
+      <!-- Placar de Líderes com Destaque para o 1º Lugar -->
+      <div class="leaderboard-container">
+        <div class="leaderboard-header">
+          <h3 class="leaderboard-title">🏆 Placar dos Melhores Skatistas</h3>
+          <span class="leaderboard-badge">Classificação Geral</span>
+        </div>
+        <div id="gameover-leaderboard-list" class="leaderboard-list">
+          <!-- preenchido via JS -->
+        </div>
+      </div>
+
+      <nav class="menu-buttons">
+        <button id="btn-restart" class="btn btn-primary btn-lg">Jogar novamente <span class="btn-hint">Enter</span></button>
+        <button id="btn-gameover-menu" class="btn btn-quiet">Menu principal</button>
+      </nav>
+    </section>
+
+    <!-- ================= TELA: PLACAR DE LÍDERES ================= -->
+    <section id="screen-leaderboard" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title">🏆 Placar de Líderes</h2>
+        <p class="screen-sub">Os maiores skatistas e recordes de todos os tempos!</p>
+      </div>
+
+      <div class="leaderboard-container leaderboard-container--fullscreen">
+        <div id="main-leaderboard-list" class="leaderboard-list">
+          <!-- preenchido via JS -->
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar ao Menu</button>
+        <button id="btn-clear-leaderboard" class="btn btn-quiet btn-danger-soft">Zerar Placar</button>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Aviso de rotação: fora do wrapper, que fica oculto em modo retrato -->
+  <div id="rotate-hint" aria-hidden="true">
+    <div class="rotate-phone"></div>
+    <strong>Gire o celular</strong>
+    <span>O jogo foi feito para a tela deitada</span>
+  </div>
+
+  <script src="js/audio.js"></script>
+  <script src="js/particles.js"></script>
+  <script src="js/character_manager.js"></script>
+  <script src="js/game_physics.js"></script>
+  <script src="js/game_world.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

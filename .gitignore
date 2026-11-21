@@ -1,0 +1,12 @@
+# Fotos originais, backups e artefatos locais (privacidade)
+Imagens/
+.backup/
+artifact/
+assets/portraits/portrait_luigi_real.png
+assets/sprites/luigi_real_*.png
+
+# Cache e arquivos temporários de sistema
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

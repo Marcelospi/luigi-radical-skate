@@ -1,0 +1,27 @@
+{
+  "defaultCharacter": "luigi_3d",
+  "characters": [
+    {
+      "id": "luigi_3d",
+      "name": "Luigi 3D (SK8-BOY)",
+      "badge": "Estilo Radical 3D",
+      "description": "Luigi em sua versão oficial 3D com capacete SK8, camisa xadrez, skate street art e manobras radicais!",
+      "renderMode": "sprite",
+      "portrait": "assets/portraits/portrait_luigi_3d.png",
+      "sprites": {
+        "skate": "assets/sprites/luigi_3d_skate.png",
+        "duck": "assets/sprites/luigi_3d_duck.png",
+        "jump": "assets/sprites/luigi_3d_jump.png",
+        "trick": "assets/sprites/luigi_3d_trick.png"
+      },
+      "stats": {
+        "velocidade": "Alta",
+        "salto": "Super Alto",
+        "manobras": "Épicas"
+      },
+      "width": 105,
+      "height": 130,
+      "duckHeight": 85
+    }
+  ]
+}

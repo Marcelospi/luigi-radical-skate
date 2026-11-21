@@ -1,0 +1,21 @@
+{
+  "name": "Luigi Radical Skate",
+  "short_name": "Luigi Skate",
+  "description": "Jogo de skate com manobras aéreas, pistas que desabam e mega rampas.",
+  "lang": "pt-BR",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#070812",
+  "theme_color": "#070812",
+  "icons": [
+    {
+      "src": "assets/portraits/portrait_luigi_3d.png",
+      "sizes": "160x160",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

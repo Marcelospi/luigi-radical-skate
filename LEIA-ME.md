@@ -1,0 +1,83 @@
+# Luigi Radical Skate 🛹
+
+Jogo de skate 2D/2.5D no navegador com física realista, personagens articulados, rampas com **Lip Boost**, **Grind** em corrimãos, 4 fases temáticas, áudio procedural via Web Audio API e **Estúdio de Personagens** por foto.
+
+---
+
+## Como Jogar no Computador
+
+Dê um duplo clique no arquivo **`JOGAR.bat`** na pasta do projeto.
+
+- Ele inicia o servidor local automaticamente usando Python e abre o jogo em `http://localhost:8000`.
+- Mostra também o endereço IP local da sua rede Wi-Fi para jogar no celular pelo navegador.
+- Quando terminar de jogar, basta fechar a janela do terminal.
+
+---
+
+## Controles
+
+| Ação | Teclado | Celular |
+|---|---|---|
+| Pular (Ollie) / Lip Boost no topo da rampa | `Espaço`, `W` ou `↑` | Botão **PULAR** |
+| Abaixar (chão) / Queda rápida (ar) / Sair do Grind | `S` ou `↓` | Botão **ABAIXAR** |
+| Remar (Acelerar) | `→` ou `D` | Botão **REMAR** |
+| Freio leve | `←` ou `A` | — |
+| Kickflip | `Z` | Botão **FLIP** |
+| Giro 360° | `X` | Botão **360°** |
+| Indy Grab | `C` | Botão **GRAB** |
+| Super Flip | `Espaço` novamente no ar | Botão **PULAR** no ar |
+| Pausar | `P` ou `Esc` | Botão `❚❚` |
+| Mudo | `M` | Botão 🔊 |
+
+- **Ollie variável**: segurar a tecla de pulo salta mais alto.
+- **Lip Boost**: aperte Pular perto do topo da rampa para decolar mais alto com impulso extra.
+- **Grind em corrimãos**: pouse sobre os corrimãos para deslizar com faíscas metálicas, multiplicar o combo e pular direto saindo do trilho.
+- **Combos**: encadear manobras no ar e pousar limpo rende bônus de **Pouso Perfeito**.
+
+---
+
+## Fases
+
+O cenário e a iluminação mudam suavemente conforme a distância, e cada nova fase dá **+1 skate e +1.000 pontos**:
+
+| | Fase | Distância |
+|---|---|---|
+| 🌇 | Skatepark ao Pôr do Sol | 0 a 600m |
+| 🏙️ | Metrópole Cyberpunk Neon | 600 a 1.400m |
+| 🌴 | Praia & Píer Tropical | 1.400 a 2.400m |
+| 🚀 | Pista Cósmica das Estrelas | 2.400m em diante |
+
+A **Fase 1 não tem abismos nem pistas que desabam** — ideal para pegar o ritmo. Caindo no vazio com mais de uma vida, o resgate devolve o skatista para a pista custando um skate.
+
+O placar guarda até 40 pontuações com nome, data e personagem, salvas localmente no navegador de cada aparelho (`localStorage`).
+
+---
+
+## Estúdio de Personagens (100% Local e Privado)
+
+No menu do jogo, acesse **Criar novo** para enviar qualquer foto:
+
+- O jogo recorta o rosto com controle de **Zoom**, **Altura** e opção de **capacete**, e extrai automaticamente a paleta de cores da roupa para vestir o skatista articulado com movimentos reais.
+- **Privacidade garantida**: nenhuma foto é enviada para servidores externos — tudo é processado e salvo exclusivamente no navegador do seu aparelho (`localStorage`).
+
+---
+
+## Estrutura do Projeto
+
+```
+index.html               página principal e HUD
+css/style.css            visual da interface e responsividade
+js/game_physics.js       física do skate, rampas, grind e rig 2.5D articulado
+js/game_world.js         geração da pista, 4 biomas, texturas e iluminação
+js/main.js               loop principal, câmera, telas e HUD
+js/particles.js          partículas (faíscas, poeira, ondas de choque)
+js/audio.js              sons realistas e música sintetizada via Web Audio API
+js/character_manager.js  personagens e Estúdio de Personagens por foto
+JOGAR.bat                atalho de 1 clique para abrir o jogo no Windows
+```
+
+### Rodar os testes automatizados
+
+```bash
+node tools/teste_fisica.js
+```
