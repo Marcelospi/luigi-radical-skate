@@ -671,28 +671,54 @@ class Game {
     const startCamera = async () => {
       showCameraError('');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showCameraError('Câmera não disponível neste navegador. Use "Escolher foto" ou abra em HTTPS/localhost.');
+        if (window.location && window.location.protocol === 'file:') {
+          showCameraError('Para usar a câmera no computador, abra o jogo pelo JOGAR.bat (localhost) ou pelo link HTTPS. Você ainda pode usar "Escolher foto"!');
+        } else {
+          showCameraError('Câmera não disponível neste navegador. Use "Escolher foto" ou abra em HTTPS/localhost.');
+        }
         return;
       }
       stopCamera();
       try {
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false
-        });
-        if (cameraVideo) {
-          cameraVideo.srcObject = cameraStream;
-          await cameraVideo.play().catch(() => {});
+        try {
+          cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+          });
+        } catch (firstErr) {
+          const fname = (firstErr && firstErr.name) || '';
+          if (fname === 'NotAllowedError' || fname === 'PermissionDeniedError' || fname === 'NotFoundError' || fname === 'DevicesNotFoundError') {
+            throw firstErr;
+          }
+          // Fallback universal para webcams de PC/notebook que rejeitam facingMode/resolução
+          cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
+
         if (cameraBox) cameraBox.hidden = false;
         if (dropArea) dropArea.hidden = true;
+
+        if (cameraVideo) {
+          cameraVideo.srcObject = cameraStream;
+          await new Promise((resolve) => {
+            if (cameraVideo.readyState >= 1) { resolve(); return; }
+            const onReady = () => {
+              cameraVideo.removeEventListener('loadedmetadata', onReady);
+              resolve();
+            };
+            cameraVideo.addEventListener('loadedmetadata', onReady);
+            setTimeout(resolve, 1200);
+          });
+          await cameraVideo.play().catch(() => {});
+        }
       } catch (err) {
         stopCamera();
         const name = (err && err.name) || '';
         if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
-          showCameraError('Permissão da câmera negada. Libere a câmera no navegador ou escolha uma foto da galeria.');
+          showCameraError('Permissão da câmera negada. Libere o acesso à câmera no navegador ou clique em "Escolher foto".');
         } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-          showCameraError('Nenhuma câmera foi encontrada neste aparelho. Use "Escolher foto".');
+          showCameraError('Nenhuma câmera foi encontrada neste computador. Clique em "Escolher foto".');
+        } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+          showCameraError('A câmera está sendo usada por outro programa. Feche o outro app ou use "Escolher foto".');
         } else {
           showCameraError('Não foi possível abrir a câmera agora. Use "Escolher foto".');
         }
@@ -722,7 +748,11 @@ class Game {
     const refreshPreview = () => {
       syncSliderState();
       if (!loadedRawImg) return;
-      preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, getOptions());
+      try {
+        preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, getOptions());
+      } catch (_) {
+        preview.src = loadedRawImg.src || '';
+      }
       preview.hidden = false;
       prompt.style.display = 'none';
       dropArea.classList.add('has-photo');
@@ -734,20 +764,37 @@ class Game {
       refreshPreview();
     };
 
+    const openFilePicker = () => {
+      stopCamera();
+      showCameraError('');
+      if (!fileInput) return;
+      // Limpar antes permite reenviar o mesmo arquivo se o usuário quiser
+      fileInput.value = '';
+      fileInput.click();
+    };
+
     const showPreviewFile = (file) => {
-      if (!file || !file.type.startsWith('image/')) return;
+      if (!file) return;
+      const isImage = (file.type && file.type.startsWith('image/'))
+        || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(file.name || '');
+      if (!isImage) {
+        showCameraError('Escolha um arquivo de imagem válido (JPG, PNG ou WEBP).');
+        return;
+      }
       stopCamera();
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => setRawImage(img);
+        img.onerror = () => showCameraError('Não foi possível ler esta imagem. Tente outro arquivo JPG ou PNG.');
         img.src = e.target.result;
       };
+      reader.onerror = () => showCameraError('Erro ao carregar o arquivo selecionado.');
       reader.readAsDataURL(file);
     };
 
     // Botões de origem (galeria e câmera)
-    if (btnGallery) btnGallery.addEventListener('click', () => { stopCamera(); fileInput.click(); });
+    if (btnGallery) btnGallery.addEventListener('click', openFilePicker);
     if (btnCamera) btnCamera.addEventListener('click', () => startCamera());
     if (btnCancelCam) btnCancelCam.addEventListener('click', () => stopCamera());
     if (btnFlipCam) {
@@ -758,7 +805,10 @@ class Game {
     }
     if (btnCapture) {
       btnCapture.addEventListener('click', () => {
-        if (!cameraVideo || !cameraVideo.videoWidth) return;
+        if (!cameraVideo || !cameraVideo.videoWidth) {
+          showCameraError('Aguarde a imagem da câmera aparecer antes de capturar.');
+          return;
+        }
         const snap = document.createElement('canvas');
         snap.width = cameraVideo.videoWidth;
         snap.height = cameraVideo.videoHeight;
@@ -816,12 +866,12 @@ class Game {
 
     // Clique abre a galeria somente quando ainda não há foto carregada
     dropArea.addEventListener('click', () => {
-      if (!loadedRawImg) fileInput.click();
+      if (!loadedRawImg) openFilePicker();
     });
     dropArea.addEventListener('keydown', (e) => {
       if ((e.key === 'Enter' || e.key === ' ') && !loadedRawImg) {
         e.preventDefault();
-        fileInput.click();
+        openFilePicker();
       }
     });
 

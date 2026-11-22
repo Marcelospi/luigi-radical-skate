@@ -367,14 +367,32 @@ class CharacterManager {
     octx.drawImage(faceCanvas, 0, 0);
 
     if (useHelmet && this.rigParts.helmetOverlay) {
-      octx.drawImage(this.rigParts.helmetOverlay, 0, 0, size, size);
+      try {
+        octx.drawImage(this.rigParts.helmetOverlay, 0, 0, size, size);
+        // Valida se o canvas continua exportável (evita SecurityError em file://)
+        out.toDataURL('image/png');
+      } catch (_) {
+        // Fallback limpo sem overlay externo para nunca travar prévia ou salvamento
+        octx.clearRect(0, 0, size, size);
+        octx.drawImage(faceCanvas, 0, 0);
+      }
     }
 
     return out;
   }
 
+  /** Exporta canvas para DataURL com proteção contra SecurityError. */
+  safeToDataUrl(canvas, fallbackSrc = '') {
+    try {
+      return canvas.toDataURL('image/png');
+    } catch (_) {
+      return fallbackSrc;
+    }
+  }
+
   /** Gera prévia ao vivo no Estúdio de Personagens (cabeça com/sem capacete ou foto inteira). */
   buildCreatorPreview(userImg, options = {}) {
+    const fallbackSrc = (userImg && userImg.src) || '';
     if (options.fullPhoto) {
       const canvas = document.createElement('canvas');
       const targetH = 220;
@@ -391,10 +409,10 @@ class CharacterManager {
         ctx.scale(-1, 1);
       }
       ctx.drawImage(userImg, 0, 0, targetW, targetH);
-      return canvas.toDataURL('image/png');
+      return this.safeToDataUrl(canvas, fallbackSrc);
     }
 
-    return this.composeHeadSpriteCanvas(userImg, options).toDataURL('image/png');
+    return this.safeToDataUrl(this.composeHeadSpriteCanvas(userImg, options), fallbackSrc);
   }
 
   /** Cria um novo personagem a partir de um arquivo ou imagem (galeria ou câmera). */
@@ -420,7 +438,10 @@ class CharacterManager {
     const fullPhoto = !!options.fullPhoto;
     const useHelmet = options.useHelmet !== false;
 
-    const headDataUrl = this.composeHeadSpriteCanvas(rawImg, { ...options, useHelmet }).toDataURL('image/png');
+    const headDataUrl = this.safeToDataUrl(
+      this.composeHeadSpriteCanvas(rawImg, { ...options, useHelmet }),
+      rawImg.src || ''
+    );
     const fallbackSprites = this.generateSpritesFromCanvas(rawImg, { faceFlipX: !!options.faceFlipX });
 
     const newChar = this.normalizeCharacter({
