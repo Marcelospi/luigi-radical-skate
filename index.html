@@ -217,18 +217,43 @@
     <section id="screen-character-creator" class="screen hidden">
       <div class="screen-head">
         <h2 class="screen-title">Estúdio de personagens</h2>
-        <p class="screen-sub">Envie uma foto e jogue com qualquer pessoa</p>
+        <p class="screen-sub">Tire uma foto na hora ou escolha da galeria e ajuste o rosto no capacete</p>
       </div>
 
       <div class="creator-container">
-        <div id="creator-drop-area" class="creator-drop" tabindex="0" role="button" aria-label="Escolher uma imagem">
-          <div id="creator-upload-prompt" class="creator-prompt">
-            <div class="creator-prompt-icon">📸</div>
-            <strong>Clique ou arraste uma foto</strong>
-            <span>JPG, PNG ou WEBP &middot; foto de frente destaca melhor o rosto</span>
+        <div class="creator-stage-col">
+          <!-- Ações de origem: galeria ou câmera ao vivo -->
+          <div class="creator-source-row">
+            <button type="button" id="btn-creator-gallery" class="btn btn-ghost btn-sm">📁 Escolher foto</button>
+            <button type="button" id="btn-creator-camera" class="btn btn-ghost btn-sm">📸 Tirar foto (Câmera)</button>
           </div>
-          <img id="preview-character-img" alt="Pré-visualização do personagem montado" hidden>
-          <input type="file" id="custom-char-file" accept="image/*" hidden>
+
+          <!-- Área de câmera ao vivo (visível apenas quando ativa) -->
+          <div id="creator-camera-box" class="creator-camera-box" hidden>
+            <div class="camera-viewport">
+              <video id="creator-camera-video" autoplay playsinline muted></video>
+              <div class="camera-oval-guide" aria-hidden="true"></div>
+            </div>
+            <div class="camera-actions">
+              <button type="button" id="btn-camera-capture" class="btn btn-primary btn-sm">📸 Capturar foto</button>
+              <button type="button" id="btn-camera-flip" class="btn btn-ghost btn-sm" title="Alternar câmera frontal/traseira">🔄 Trocar câmera</button>
+              <button type="button" id="btn-camera-cancel" class="btn btn-quiet btn-sm">Cancelar</button>
+            </div>
+          </div>
+
+          <p id="creator-camera-error" class="creator-camera-error" hidden></p>
+
+          <!-- Área de drop e prévia interativa (arrastar com dedo ou mouse) -->
+          <div id="creator-drop-area" class="creator-drop" tabindex="0" role="button" aria-label="Escolher ou arrastar uma imagem">
+            <div id="creator-upload-prompt" class="creator-prompt">
+              <div class="creator-prompt-icon">📸</div>
+              <strong>Clique, arraste uma foto ou use a câmera</strong>
+              <span>JPG, PNG ou WEBP &middot; tudo fica salvo só no seu aparelho</span>
+            </div>
+            <img id="preview-character-img" alt="Pré-visualização do rosto no capacete" draggable="false" hidden>
+            <span id="creator-drag-hint" class="creator-drag-hint" hidden>✋ Arraste a foto para centralizar o rosto</span>
+            <input type="file" id="custom-char-file" accept="image/*" hidden>
+          </div>
         </div>
 
         <div class="creator-form">
@@ -238,23 +263,30 @@
           </div>
 
           <div class="creator-controls">
-            <label class="creator-toggle">
-              <input type="checkbox" id="custom-body-skater" checked>
-              <span>Rosto no corpo de skatista <small>(desmarque para usar a foto inteira)</small></span>
-            </label>
             <div class="creator-slider-field">
+              <label for="custom-face-x">Esquerda ↔ Direita</label>
+              <input type="range" id="custom-face-x" min="-0.45" max="0.45" step="0.01" value="0">
+            </div>
+            <div class="creator-slider-field">
+              <label for="custom-face-y">Cima ↕ Baixo</label>
+              <input type="range" id="custom-face-y" min="-0.45" max="0.45" step="0.01" value="0">
+            </div>
+            <div class="creator-slider-field creator-slider-field--wide">
               <label for="custom-face-zoom">Zoom do rosto</label>
-              <input type="range" id="custom-face-zoom" min="0.85" max="1.8" step="0.05" value="1.10">
+              <input type="range" id="custom-face-zoom" min="0.75" max="2.4" step="0.02" value="1.15">
             </div>
-            <div class="creator-slider-field">
-              <label for="custom-face-y">Altura do rosto</label>
-              <input type="range" id="custom-face-y" min="-0.25" max="0.25" step="0.02" value="0">
-            </div>
-          </div>
-
-          <div class="note">
-            <b>Como funciona</b>
-            Encaixamos seu rosto sob o capacete SK8 nas 4 poses ilustradas de skatista (ou usamos sua foto inteira se preferir). Tudo fica salvo só no seu navegador.
+            <label class="creator-toggle">
+              <input type="checkbox" id="custom-face-flip">
+              <span>Espelhar foto (inverter lado)</span>
+            </label>
+            <label class="creator-toggle">
+              <input type="checkbox" id="custom-use-helmet" checked>
+              <span>Usar capacete SK8 oficial</span>
+            </label>
+            <label class="creator-toggle">
+              <input type="checkbox" id="custom-full-photo">
+              <span>Usar a foto inteira <small>(sem boneco articulado)</small></span>
+            </label>
           </div>
 
           <button id="btn-save-custom-char" class="btn btn-primary">Salvar e jogar</button>

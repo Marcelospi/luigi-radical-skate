@@ -880,5 +880,117 @@ console.log('\n=== 24. 4 Esportes: Skate, BMX, Patinete e Patins ===');
   }
 }
 
+// ============================================================
+console.log('\n=== 25. Cutout Puppet Rig (assets/rig/*.png) com IK nos 4 esportes ===');
+{
+  const fakeImg = (w, h) => ({ width: w, height: h });
+  const fakeRig = {
+    ready: true,
+    head: fakeImg(160, 160),
+    helmetOverlay: fakeImg(160, 160),
+    torso: fakeImg(120, 140),
+    armUpper: fakeImg(52, 88),
+    armLower: fakeImg(52, 96),
+    thigh: fakeImg(64, 96),
+    shinShoe: fakeImg(76, 110),
+    skateboard: fakeImg(180, 56)
+  };
+
+  let nanCalls = 0;
+  let drawImageCalls = 0;
+  const baseCtx = mockCtx();
+  const spyCtx = new Proxy(baseCtx, {
+    get(target, prop) {
+      const val = target[prop];
+      if (typeof val === 'function') {
+        return (...args) => {
+          if (prop === 'drawImage') drawImageCalls++;
+          for (const a of args) {
+            if (typeof a === 'number' && !Number.isFinite(a)) nanCalls++;
+          }
+          return val.apply(target, args);
+        };
+      }
+      return val;
+    }
+  });
+
+  const prevGetRigParts = sandbox.characterManager.getRigParts;
+  const prevGetHeadImage = sandbox.characterManager.getHeadImage;
+  const prevGetSelected = sandbox.characterManager.getSelected;
+
+  sandbox.characterManager.getRigParts = () => fakeRig;
+  sandbox.characterManager.getHeadImage = () => fakeImg(160, 160);
+  sandbox.characterManager.getSelected = () => ({
+    id: 'luigi_3d', renderMode: 'sprite', fullPhoto: false, width: 105, height: 130, duckHeight: 85
+  });
+
+  let ok = true;
+  let erro = '';
+  let peRemandoMoveu = false;
+  let quadrilAgachou = false;
+
+  try {
+    for (const sportId of ['skate', 'bmx', 'scooter', 'skates']) {
+      const { world, player } = newRun();
+      player.setSport(sportId);
+
+      // Cruzeiro
+      step(world, player, {});
+      player.draw(spyCtx);
+      const hipNormal = player.rigPose.hipY;
+      const rearFootNormalX = player.rigPose.rearFootX;
+
+      // Remada / aceleracao
+      for (let i = 0; i < 8; i++) {
+        step(world, player, { ArrowRight: true });
+        player.draw(spyCtx);
+      }
+      if (sportId === 'skate' && Math.abs(player.rigPose.rearFootX - rearFootNormalX) > 2) {
+        peRemandoMoveu = true;
+      }
+
+      // Agachamento
+      for (let i = 0; i < 8; i++) {
+        step(world, player, { KeyS: true });
+        player.draw(spyCtx);
+      }
+      if (sportId === 'skate' && player.rigPose.hipY > hipNormal + 8) {
+        quadrilAgachou = true;
+      }
+
+      // Salto + manobras (KeyZ, KeyC)
+      step(world, player, {});
+      step(world, player, { ArrowUp: true });
+      step(world, player, { KeyZ: true });
+      player.draw(spyCtx);
+      for (let i = 0; i < 25; i++) step(world, player, {});
+      step(world, player, { KeyC: true });
+      player.draw(spyCtx);
+    }
+
+    // Modo fullPhoto usa fallback de sprite sem quebrar
+    sandbox.characterManager.getSelected = () => ({
+      id: 'custom_full', renderMode: 'sprite', fullPhoto: true, width: 100, height: 130, duckHeight: 85
+    });
+    const { world, player } = newRun();
+    step(world, player, {});
+    player.draw(spyCtx);
+  } catch (e) {
+    ok = false;
+    erro = String(e && e.message || e);
+  } finally {
+    sandbox.characterManager.getRigParts = prevGetRigParts;
+    sandbox.characterManager.getHeadImage = prevGetHeadImage;
+    sandbox.characterManager.getSelected = prevGetSelected;
+  }
+
+  check('Cutout Rig desenha pecas nos 4 esportes sem erros nem NaN',
+    ok && nanCalls === 0 && drawImageCalls > 40,
+    erro || `drawImage=${drawImageCalls}, nanCalls=${nanCalls}`);
+  check('remada articula o pe traseiro de forma independente', peRemandoMoveu === true);
+  check('agachamento abaixa o quadril dobrando os joelhos no IK', quadrilAgachou === true);
+}
+
 console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
 process.exit(failures === 0 ? 0 : 1);

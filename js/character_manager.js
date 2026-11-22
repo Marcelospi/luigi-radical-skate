@@ -1,18 +1,19 @@
-// Gerenciador de Personagens e Estúdio de Criação de Novos Personagens
-// Usa os sprites ilustrados oficiais e permite compor o rosto de qualquer foto
-// diretamente sobre as 4 poses oficiais de skatista (ou usar a foto inteira).
+// Gerenciador de Personagens, Peças do Cutout Rig 2D e Estúdio de Personagens
+// Pré-carrega assets/rig/*.png para animação articulada com IK e permite criar
+// personagens por foto (galeria ou câmera) acoplando o rosto sob o capacete SK8 oficial.
 
-// Coordenadas calibradas da abertura do rosto (abaixo da aba do capacete SK8)
-// nas 4 poses ilustradas oficiais de luigi_3d_{skate,duck,jump,trick}.png.
-const SKATER_FACE_SLOTS = {
-  skate: { cx: 0.446, cy: 0.179, rx: 0.088, ry: 0.082, rot: -0.14 },
-  duck:  { cx: 0.449, cy: 0.175, rx: 0.088, ry: 0.084, rot: -0.12 },
-  jump:  { cx: 0.521, cy: 0.234, rx: 0.084, ry: 0.084, rot:  0.04 },
-  trick: { cx: 0.332, cy: 0.276, rx: 0.090, ry: 0.084, rot: -0.45 }
+const RIG_ASSET_PATHS = {
+  head:          'assets/rig/head_luigi.png',
+  helmetOverlay: 'assets/rig/helmet_overlay.png',
+  torso:         'assets/rig/torso.png',
+  armUpper:      'assets/rig/arm_upper.png',
+  armLower:      'assets/rig/arm_lower.png',
+  thigh:         'assets/rig/thigh.png',
+  shinShoe:      'assets/rig/shin_shoe.png',
+  skateboard:    'assets/rig/skateboard.png'
 };
 
-// Linhas de corte abaixo dos solados dos tênis para remover apenas a prancha/rodas
-// do skate quando o jogador escolhe Bicicleta (BMX), Patinete ou Patins.
+// Linhas de corte abaixo dos solados dos tênis (fallback de sprite quando rig não carregou)
 const SKATE_CUT_LINES = {
   skate: { x1: 0.22, y1: 0.94, x2: 0.96, y2: 0.60 },
   duck:  { x1: 0.22, y1: 0.94, x2: 0.96, y2: 0.60 },
@@ -28,6 +29,17 @@ class CharacterManager {
     this.loadedHeads = {};
     this.riderCache = {};
     this.scaleCache = {};
+    this.rigParts = {
+      ready: false,
+      head: null,
+      helmetOverlay: null,
+      torso: null,
+      armUpper: null,
+      armLower: null,
+      thigh: null,
+      shinShoe: null,
+      skateboard: null
+    };
   }
 
   async init() {
@@ -59,13 +71,10 @@ class CharacterManager {
       ];
     }
 
-    // Normaliza todos os personagens para modo 'sprite'
     this.characters = this.characters.map(char => this.normalizeCharacter(char));
-
-    // Carregar personagens adicionais criados no navegador
     this.loadCustomCharacters();
 
-    // Recuperar seleção anterior do usuário (com fallback seguro se o ID não existir mais)
+    // Recuperar seleção anterior com fallback seguro
     try {
       const saved = localStorage.getItem('luigi_selected_char');
       if (saved && this.characters.some(c => c.id === saved)) {
@@ -75,16 +84,47 @@ class CharacterManager {
       }
     } catch (e) {}
 
-    // Pré-carregar todas as imagens
-    await this.preloadAllSprites();
+    await Promise.all([
+      this.preloadRigParts(),
+      this.preloadAllSprites()
+    ]);
   }
 
   normalizeCharacter(char) {
     if (!char) return char;
+    const isFullPhoto = !!(char.fullPhoto || char.bodyMode === 'fullphoto');
     return {
       ...char,
-      renderMode: 'sprite'
+      renderMode: 'sprite',
+      fullPhoto: isFullPhoto,
+      useHelmet: char.useHelmet !== false
     };
+  }
+
+  /** Pré-carrega as 8 peças ilustradas do Cutout Rig 2D em assets/rig/*.png. */
+  async preloadRigParts() {
+    const entries = Object.entries(RIG_ASSET_PATHS);
+    const promises = entries.map(([key, src]) => new Promise((resolve) => {
+      if (this.rigParts[key]) { resolve(); return; }
+      const img = new Image();
+      img.onload = () => {
+        this.rigParts[key] = img;
+        resolve();
+      };
+      img.onerror = () => {
+        console.warn(`Falha ao carregar peça do rig (${key}): ${src}`);
+        resolve();
+      };
+      img.src = src;
+    }));
+
+    await Promise.all(promises);
+    this.rigParts.ready = entries.every(([key]) => !!this.rigParts[key]);
+  }
+
+  /** Retorna as 8 peças do Cutout Rig 2D (ou { ready: false } enquanto carrega). */
+  getRigParts() {
+    return this.rigParts;
   }
 
   loadCustomCharacters() {
@@ -155,6 +195,23 @@ class CharacterManager {
           }
         }
       }
+
+      // Pré-carrega headSprite de personagens customizados para o Cutout Rig
+      const headSrc = char.headSprite || (char.isCustom && !char.fullPhoto ? char.portrait : null);
+      if (headSrc && !this.loadedHeads[char.id]) {
+        promises.push(new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            this.loadedHeads[char.id] = img;
+            resolve();
+          };
+          img.onerror = () => {
+            console.warn(`Falha ao carregar cabeça do personagem ${char.id}`);
+            resolve();
+          };
+          img.src = headSrc;
+        }));
+      }
     }
     await Promise.all(promises);
     this.scaleCache = {};
@@ -165,16 +222,22 @@ class CharacterManager {
   }
 
   /**
-   * Retorna versão em cache do sprite sem a prancha/rodas do skate na base
-   * (preservando os tênis) para acoplar Bicicleta (BMX), Patinete ou Patins.
+   * Retorna a imagem pré-carregada da cabeça 160x160 para o Cutout Rig 2D.
+   * Para `luigi_3d` retorna `rigParts.head`; para customizados retorna `loadedHeads[charId]`.
    */
+  getHeadImage(charId) {
+    if (this.loadedHeads[charId]) return this.loadedHeads[charId];
+    if (charId === 'luigi_3d' && this.rigParts.head) return this.rigParts.head;
+    return null;
+  }
+
+  /** Fallback de sprite sem prancha de skate (usado apenas se o Cutout Rig não estiver pronto). */
   getRiderSprite(charId, pose) {
     const base = this.getSprite(charId, pose);
     if (!base) return null;
 
     const char = this.getCharacter(charId);
-    // Personagens em modo foto inteira não têm a prancha ilustrada padrão
-    if (char && char.bodyMode === 'fullphoto') return base;
+    if (char && char.fullPhoto) return base;
 
     const key = charId + ':' + pose;
     if (this.riderCache[key]) return this.riderCache[key];
@@ -189,7 +252,6 @@ class CharacterManager {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(base, 0, 0, w, h);
 
-      // Remove apenas a área diagonal abaixo dos solados dos tênis (prancha + trucks + rodinhas)
       ctx.globalCompositeOperation = 'destination-out';
       ctx.fillStyle = '#000';
       ctx.beginPath();
@@ -209,14 +271,6 @@ class CharacterManager {
     }
   }
 
-  getHeadImage(charId) {
-    return this.loadedHeads[charId] || null;
-  }
-
-  /**
-   * Fator de escala em pixels por unidade de sprite, derivado da pose "skate".
-   * Todas as poses usam esta mesma escala para manter proporção consistente.
-   */
   getSpriteScale(charId, targetHeight) {
     const cacheKey = charId + ':' + targetHeight;
     if (this.scaleCache[cacheKey] !== undefined) return this.scaleCache[cacheKey];
@@ -228,7 +282,6 @@ class CharacterManager {
     return scale;
   }
 
-  /** Cor de contraluz (rim-light) coerente com o bioma atual. */
   getRimColor(theme = 'skatepark') {
     const map = {
       skatepark: 'rgba(255, 198, 120, 0.28)',
@@ -240,197 +293,174 @@ class CharacterManager {
   }
 
   // ==========================================================
-  // Estúdio de Personagens: rosto no corpo ilustrado ou foto inteira
+  // Estúdio de Personagens: cabeça 160x160 com helmet_overlay.png
   // ==========================================================
 
-  /** Calcula a janela quadrada de recorte do rosto na foto enviada. */
-  getFaceCropRect(img, options = {}) {
-    const faceZoom = Math.max(0.8, Math.min(2.0, Number(options.faceZoom) || 1.1));
-    const faceOffsetY = Math.max(-0.35, Math.min(0.35, Number(options.faceOffsetY) || 0));
-    const minSide = Math.min(img.width, img.height);
-    const cropSize = Math.max(24, minSide / faceZoom);
-    const sx = Math.max(0, Math.min(img.width - cropSize, (img.width - cropSize) * 0.5));
-    const baseTop = Math.max(0, (img.height - minSide) * 0.14);
-    const syRaw = baseTop + faceOffsetY * minSide + (minSide - cropSize) * 0.22;
-    const sy = Math.max(0, Math.min(img.height - cropSize, syRaw));
-    return { sx, sy, cropSize };
-  }
+  /**
+   * Compõe a cabeça 160x160 no mesmo enquadramento de head_luigi.png:
+   * - Aplica zoom, deslocamento X/Y e espelhamento horizontal (faceFlipX).
+   * - Recorta em oval suave (feather) adaptado para capacete ou rosto livre.
+   * - Aplica assets/rig/helmet_overlay.png POR CIMA quando useHelmet=true.
+   */
+  composeHeadSpriteCanvas(userImg, options = {}) {
+    const size = 160;
+    const zoom = Math.max(0.7, Math.min(2.6, Number(options.faceZoom) || 1.15));
+    const offsetX = Math.max(-0.5, Math.min(0.5, Number(options.faceOffsetX) || 0));
+    const offsetY = Math.max(-0.5, Math.min(0.5, Number(options.faceOffsetY) || 0));
+    const flipX = !!options.faceFlipX;
+    const useHelmet = options.useHelmet !== false;
 
-  /** Recorta o rosto em máscara oval suave pronta para encaixar sob o capacete. */
-  createFacePatchCanvas(userImg, options = {}) {
-    const { sx, sy, cropSize } = this.getFaceCropRect(userImg, options);
-    const size = 128;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(userImg, sx, sy, cropSize, cropSize, 0, 0, size, size);
+    // 1. Camada da foto recortada em oval suave
+    const faceCanvas = document.createElement('canvas');
+    faceCanvas.width = size;
+    faceCanvas.height = size;
+    const fctx = faceCanvas.getContext('2d');
+    fctx.imageSmoothingEnabled = true;
+    fctx.imageSmoothingQuality = 'high';
 
-    // Sombra sutil da aba do capacete na testa para integração realista
-    const shadowGrad = ctx.createLinearGradient(0, 0, 0, size * 0.38);
-    shadowGrad.addColorStop(0, 'rgba(20, 14, 10, 0.42)');
-    shadowGrad.addColorStop(1, 'rgba(20, 14, 10, 0)');
-    ctx.fillStyle = shadowGrad;
-    ctx.fillRect(0, 0, size, size * 0.38);
+    const iw = userImg.naturalWidth || userImg.width || 160;
+    const ih = userImg.naturalHeight || userImg.height || 160;
+    const baseScale = Math.max(size / iw, size / ih) * zoom;
+    const drawW = iw * baseScale;
+    const drawH = ih * baseScale;
 
-    // Máscara oval suave nas bordas (feather)
-    ctx.globalCompositeOperation = 'destination-in';
-    const mask = ctx.createRadialGradient(size / 2, size / 2, size * 0.28, size / 2, size / 2, size * 0.49);
+    // Centraliza levemente para baixo quando tem capacete (para o rosto ficar abaixo da aba)
+    const centerShiftY = useHelmet ? 14 : 0;
+    const dx = size * 0.5 + offsetX * size;
+    const dy = size * 0.5 + centerShiftY + offsetY * size;
+
+    fctx.save();
+    fctx.translate(dx, dy);
+    if (flipX) fctx.scale(-1, 1);
+    fctx.drawImage(userImg, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+    fctx.restore();
+
+    // Aplica máscara oval suave (feather) deixando o rosto bem integrado
+    fctx.globalCompositeOperation = 'destination-in';
+    const ovalCx = size * 0.5;
+    const ovalCy = useHelmet ? size * 0.58 : size * 0.50;
+    const ovalRx = useHelmet ? size * 0.37 : size * 0.42;
+    const ovalRy = useHelmet ? size * 0.38 : size * 0.46;
+
+    fctx.save();
+    fctx.translate(ovalCx, ovalCy);
+    fctx.scale(1, ovalRy / ovalRx);
+    const mask = fctx.createRadialGradient(0, 0, ovalRx * 0.62, 0, 0, ovalRx);
     mask.addColorStop(0, 'rgba(0,0,0,1)');
-    mask.addColorStop(0.72, 'rgba(0,0,0,1)');
-    mask.addColorStop(0.92, 'rgba(0,0,0,0.45)');
+    mask.addColorStop(0.80, 'rgba(0,0,0,1)');
+    mask.addColorStop(0.95, 'rgba(0,0,0,0.45)');
     mask.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = mask;
-    ctx.beginPath();
-    ctx.ellipse(size / 2, size / 2, size * 0.46, size * 0.49, 0, 0, Math.PI * 2);
-    ctx.fill();
+    fctx.fillStyle = mask;
+    fctx.beginPath();
+    fctx.arc(0, 0, ovalRx, 0, Math.PI * 2);
+    fctx.fill();
+    fctx.restore();
 
-    return canvas;
-  }
+    // 2. Camada final combinando rosto + capacete SK8 oficial por cima
+    const out = document.createElement('canvas');
+    out.width = size;
+    out.height = size;
+    const octx = out.getContext('2d');
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
 
-  /** Compõe o rosto recortado sobre uma pose ilustrada oficial de skatista. */
-  composeFaceOnPose(baseSprite, facePatch, slot) {
-    const w = baseSprite.naturalWidth || baseSprite.width;
-    const h = baseSprite.naturalHeight || baseSprite.height;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
+    octx.drawImage(faceCanvas, 0, 0);
 
-    ctx.drawImage(baseSprite, 0, 0, w, h);
-
-    ctx.save();
-    ctx.translate(slot.cx * w, slot.cy * h);
-    ctx.rotate(slot.rot || 0);
-    const drawW = slot.rx * 2 * w;
-    const drawH = slot.ry * 2 * h;
-    ctx.drawImage(facePatch, -drawW / 2, -drawH / 2, drawW, drawH);
-    ctx.restore();
-
-    return canvas.toDataURL('image/png');
-  }
-
-  /** Gera prévia ao vivo no Estúdio de Personagens (corpo de skatista ou foto inteira). */
-  buildCreatorPreview(userImg, options = {}) {
-    const bodyMode = options.bodyMode || 'skater';
-    const baseSkate = this.getSprite('luigi_3d', 'skate');
-
-    if (bodyMode === 'skater' && baseSkate) {
-      const facePatch = this.createFacePatchCanvas(userImg, options);
-      return this.composeFaceOnPose(baseSkate, facePatch, SKATER_FACE_SLOTS.skate);
+    if (useHelmet && this.rigParts.helmetOverlay) {
+      octx.drawImage(this.rigParts.helmetOverlay, 0, 0, size, size);
     }
 
-    // Modo foto inteira: mostra a imagem ajustada com enquadramento limpo
-    const canvas = document.createElement('canvas');
-    const targetH = 220;
-    const targetW = Math.max(110, Math.min(220, Math.floor(userImg.width * (targetH / userImg.height))));
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(userImg, 0, 0, targetW, targetH);
-    return canvas.toDataURL('image/png');
+    return out;
   }
 
-  /** Gera retrato quadrado (160x160) focado no rosto para cards e placar de líderes. */
-  createPortraitDataUrl(userImg, options = {}) {
-    const { sx, sy, cropSize } = this.getFaceCropRect(userImg, options);
-    const canvas = document.createElement('canvas');
-    canvas.width = 160;
-    canvas.height = 160;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(userImg, sx, sy, cropSize, cropSize, 0, 0, 160, 160);
-    return canvas.toDataURL('image/png');
+  /** Gera prévia ao vivo no Estúdio de Personagens (cabeça com/sem capacete ou foto inteira). */
+  buildCreatorPreview(userImg, options = {}) {
+    if (options.fullPhoto) {
+      const canvas = document.createElement('canvas');
+      const targetH = 220;
+      const iw = userImg.naturalWidth || userImg.width || 160;
+      const ih = userImg.naturalHeight || userImg.height || 160;
+      const targetW = Math.max(110, Math.min(220, Math.floor(iw * (targetH / ih))));
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      if (options.faceFlipX) {
+        ctx.translate(targetW, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(userImg, 0, 0, targetW, targetH);
+      return canvas.toDataURL('image/png');
+    }
+
+    return this.composeHeadSpriteCanvas(userImg, options).toDataURL('image/png');
   }
 
-  // Cria um novo personagem personalizado a partir de uma foto enviada pelo usuário
-  async createCustomCharacterFromImage(file, name, options = {}) {
-    return new Promise((resolve, reject) => {
+  /** Cria um novo personagem a partir de um arquivo ou imagem (galeria ou câmera). */
+  async createCustomCharacterFromImage(fileOrImg, name, options = {}) {
+    const loadRawImg = () => new Promise((resolve, reject) => {
+      if (fileOrImg instanceof HTMLImageElement || fileOrImg instanceof HTMLCanvasElement) {
+        resolve(fileOrImg);
+        return;
+      }
       const reader = new FileReader();
-      reader.onload = async (e) => {
+      reader.onload = (e) => {
         const rawImg = new Image();
-        rawImg.onload = async () => {
-          const charId = 'custom_' + Date.now();
-          const bodyMode = options.bodyMode || 'skater';
-          const sprites = this.generateCustomSprites(rawImg, { ...options, bodyMode });
-
-          const newChar = this.normalizeCharacter({
-            id: charId,
-            name: name || 'Novo Amigo Radical',
-            badge: bodyMode === 'skater' ? 'Skatista 3D!' : 'Foto Personalizada!',
-            description: bodyMode === 'skater'
-              ? 'Seu rosto no corpo oficial de skatista com manobras radicais!'
-              : 'Personagem personalizado criado com sua foto na pista do Luigi!',
-            isCustom: true,
-            bodyMode,
-            renderMode: 'sprite',
-            portrait: sprites.portrait,
-            sprites: {
-              skate: sprites.skate,
-              duck:  sprites.duck,
-              jump:  sprites.jump,
-              trick: sprites.trick
-            },
-            stats: {
-              velocidade: 'Máxima',
-              salto: 'Foguete',
-              manobras: 'Radical'
-            },
-            width: 105,
-            height: 130,
-            duckHeight: 85
-          });
-
-          this.characters.push(newChar);
-          this.saveCustomCharacters();
-          await this.preloadAllSprites();
-          this.select(charId);
-          resolve(newChar);
-        };
+        rawImg.onload = () => resolve(rawImg);
         rawImg.onerror = reject;
         rawImg.src = e.target.result;
       };
       reader.onerror = reject;
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(fileOrImg);
     });
+
+    const rawImg = await loadRawImg();
+    const charId = 'custom_' + Date.now();
+    const fullPhoto = !!options.fullPhoto;
+    const useHelmet = options.useHelmet !== false;
+
+    const headDataUrl = this.composeHeadSpriteCanvas(rawImg, { ...options, useHelmet }).toDataURL('image/png');
+    const fallbackSprites = this.generateSpritesFromCanvas(rawImg, { faceFlipX: !!options.faceFlipX });
+
+    const newChar = this.normalizeCharacter({
+      id: charId,
+      name: name || 'Novo Amigo Radical',
+      badge: fullPhoto ? 'Foto Personalizada!' : (useHelmet ? 'Skatista com Capacete!' : 'Skatista Articulado!'),
+      description: fullPhoto
+        ? 'Personagem criado com sua foto inteira na pista!'
+        : 'Seu rosto integrado ao boneco articulado com remada, flexão de joelhos e manobras reais!',
+      isCustom: true,
+      renderMode: 'sprite',
+      fullPhoto,
+      useHelmet,
+      headSprite: headDataUrl,
+      portrait: headDataUrl,
+      sprites: {
+        skate: fallbackSprites.skate,
+        duck:  fallbackSprites.duck,
+        jump:  fallbackSprites.jump,
+        trick: fallbackSprites.trick
+      },
+      stats: {
+        velocidade: 'Máxima',
+        salto: 'Foguete',
+        manobras: 'Radical'
+      },
+      width: 105,
+      height: 130,
+      duckHeight: 85
+    });
+
+    this.characters.push(newChar);
+    this.saveCustomCharacters();
+    await this.preloadAllSprites();
+    this.select(charId);
+    return newChar;
   }
 
-  /** Gera os 4 sprites (rosto composto nas 4 poses ilustradas ou foto inteira). */
-  generateCustomSprites(userImg, options = {}) {
-    const bodyMode = options.bodyMode || 'skater';
-    const portrait = this.createPortraitDataUrl(userImg, options);
-
-    if (bodyMode === 'skater') {
-      const poses = ['skate', 'duck', 'jump', 'trick'];
-      const hasAllBases = poses.every(p => !!this.getSprite('luigi_3d', p));
-      if (hasAllBases) {
-        const facePatch = this.createFacePatchCanvas(userImg, options);
-        return {
-          skate: this.composeFaceOnPose(this.getSprite('luigi_3d', 'skate'), facePatch, SKATER_FACE_SLOTS.skate),
-          duck:  this.composeFaceOnPose(this.getSprite('luigi_3d', 'duck'),  facePatch, SKATER_FACE_SLOTS.duck),
-          jump:  this.composeFaceOnPose(this.getSprite('luigi_3d', 'jump'),  facePatch, SKATER_FACE_SLOTS.jump),
-          trick: this.composeFaceOnPose(this.getSprite('luigi_3d', 'trick'), facePatch, SKATER_FACE_SLOTS.trick),
-          portrait
-        };
-      }
-    }
-
-    // Fallback ou modo "Usar a foto inteira"
-    return {
-      ...this.generateSpritesFromCanvas(userImg),
-      portrait
-    };
-  }
-
-  // Gera variações (skate, duck, jump, trick, portrait) a partir da foto inteira
-  generateSpritesFromCanvas(img) {
+  // Gera variações (skate, duck, jump, trick) para modo fullPhoto e fallback
+  generateSpritesFromCanvas(img, options = {}) {
     const createDataUrl = (drawFn, w, h) => {
       const canvas = document.createElement('canvas');
       canvas.width = w;
@@ -438,12 +468,18 @@ class CharacterManager {
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
+      if (options.faceFlipX) {
+        ctx.translate(w, 0);
+        ctx.scale(-1, 1);
+      }
       drawFn(ctx, w, h);
       return canvas.toDataURL('image/png');
     };
 
-    const targetH = 240;
-    const targetW = Math.max(120, Math.min(220, Math.floor(img.width * (targetH / img.height))));
+    const iw = img.naturalWidth || img.width || 160;
+    const ih = img.naturalHeight || img.height || 160;
+    const targetH = 220;
+    const targetW = Math.max(110, Math.min(200, Math.floor(iw * (targetH / ih))));
 
     const skateData = createDataUrl((ctx, w, h) => {
       ctx.drawImage(img, 0, 0, w, h);
@@ -451,28 +487,25 @@ class CharacterManager {
 
     const duckData = createDataUrl((ctx, w, h) => {
       ctx.drawImage(img, 0, 0, w, h);
-    }, Math.floor(targetW * 1.12), Math.floor(targetH * 0.70));
+    }, Math.floor(targetW * 1.10), Math.floor(targetH * 0.72));
 
     const jumpData = createDataUrl((ctx, w, h) => {
       ctx.translate(w / 2, h / 2);
       ctx.rotate(-14 * Math.PI / 180);
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
-    }, targetW + 40, targetH + 40);
+    }, targetW + 36, targetH + 36);
 
     const trickData = createDataUrl((ctx, w, h) => {
       ctx.translate(w / 2, h / 2);
       ctx.rotate(22 * Math.PI / 180);
       ctx.drawImage(img, -targetW / 2, -targetH / 2, targetW, targetH);
-    }, targetW + 40, targetH + 40);
-
-    const portraitData = this.createPortraitDataUrl(img);
+    }, targetW + 36, targetH + 36);
 
     return {
       skate: skateData,
       duck:  duckData,
       jump:  jumpData,
-      trick: trickData,
-      portrait: portraitData
+      trick: trickData
     };
   }
 

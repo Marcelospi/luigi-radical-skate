@@ -68,9 +68,9 @@ O placar guarda até 40 pontuações com nome, data e personagem, salvas localme
 
 ## Estúdio de Personagens (100% Local e Privado)
 
-No menu do jogo, acesse **Criar novo** para enviar qualquer foto:
+No menu do jogo, acesse **Criar novo** para tirar uma foto na hora pela **câmera** ou escolher da galeria:
 
-- O jogo recorta o rosto com controle de **Zoom**, **Altura** e opção de **capacete**, e extrai automaticamente a paleta de cores da roupa para vestir o skatista articulado com movimentos reais.
+- Ajuste **Esquerda ↔ Direita**, **Cima ↕ Baixo**, **Zoom**, **Espelhar foto** ou **arraste direto na prévia** para encaixar o rosto sob o **capacete SK8 oficial** no boneco articulado (ou use a foto inteira se preferir).
 - **Privacidade garantida**: nenhuma foto é enviada para servidores externos — tudo é processado e salvo exclusivamente no navegador do seu aparelho (`localStorage`).
 
 ---

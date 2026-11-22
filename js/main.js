@@ -549,6 +549,10 @@ class Game {
     const target = screens[state];
     if (target) document.getElementById(target).classList.remove('hidden');
 
+    if (state !== 'CREATOR' && this.stopCreatorCamera) {
+      this.stopCreatorCamera();
+    }
+
     if (state === 'MENU') {
       this.refreshMenuInfo();
       if (window.soundSystem && window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
@@ -618,25 +622,101 @@ class Game {
     const fileInput = document.getElementById('custom-char-file');
     const dropArea = document.getElementById('creator-drop-area');
     const preview = document.getElementById('preview-character-img');
+    const dragHint = document.getElementById('creator-drag-hint');
     const prompt = document.getElementById('creator-upload-prompt');
     const nameInput = document.getElementById('custom-char-name');
-    const bodySkaterInput = document.getElementById('custom-body-skater');
+    const faceXInput = document.getElementById('custom-face-x');
+    const faceYInput = document.getElementById('custom-face-y');
     const zoomInput = document.getElementById('custom-face-zoom');
-    const offsetYInput = document.getElementById('custom-face-y');
+    const flipInput = document.getElementById('custom-face-flip');
+    const helmetInput = document.getElementById('custom-use-helmet');
+    const fullPhotoInput = document.getElementById('custom-full-photo');
     const saveBtn = document.getElementById('btn-save-custom-char');
-    let selectedFile = null;
+
+    const btnGallery = document.getElementById('btn-creator-gallery');
+    const btnCamera = document.getElementById('btn-creator-camera');
+    const cameraBox = document.getElementById('creator-camera-box');
+    const cameraVideo = document.getElementById('creator-camera-video');
+    const cameraError = document.getElementById('creator-camera-error');
+    const btnCapture = document.getElementById('btn-camera-capture');
+    const btnFlipCam = document.getElementById('btn-camera-flip');
+    const btnCancelCam = document.getElementById('btn-camera-cancel');
+
     let loadedRawImg = null;
+    let cameraStream = null;
+    let facingMode = 'user';
+
+    const showCameraError = (msg) => {
+      if (!cameraError) return;
+      if (!msg) {
+        cameraError.hidden = true;
+        cameraError.textContent = '';
+      } else {
+        cameraError.textContent = msg;
+        cameraError.hidden = false;
+      }
+    };
+
+    const stopCamera = () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+        cameraStream = null;
+      }
+      if (cameraVideo) cameraVideo.srcObject = null;
+      if (cameraBox) cameraBox.hidden = true;
+      if (dropArea) dropArea.hidden = false;
+    };
+    this.stopCreatorCamera = stopCamera;
+
+    const startCamera = async () => {
+      showCameraError('');
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showCameraError('Câmera não disponível neste navegador. Use "Escolher foto" ou abra em HTTPS/localhost.');
+        return;
+      }
+      stopCamera();
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+        if (cameraVideo) {
+          cameraVideo.srcObject = cameraStream;
+          await cameraVideo.play().catch(() => {});
+        }
+        if (cameraBox) cameraBox.hidden = false;
+        if (dropArea) dropArea.hidden = true;
+      } catch (err) {
+        stopCamera();
+        const name = (err && err.name) || '';
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          showCameraError('Permissão da câmera negada. Libere a câmera no navegador ou escolha uma foto da galeria.');
+        } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+          showCameraError('Nenhuma câmera foi encontrada neste aparelho. Use "Escolher foto".');
+        } else {
+          showCameraError('Não foi possível abrir a câmera agora. Use "Escolher foto".');
+        }
+      }
+    };
 
     const getOptions = () => ({
-      bodyMode: (bodySkaterInput && !bodySkaterInput.checked) ? 'fullphoto' : 'skater',
-      faceZoom: zoomInput ? parseFloat(zoomInput.value) || 1.1 : 1.1,
-      faceOffsetY: offsetYInput ? parseFloat(offsetYInput.value) || 0 : 0
+      faceOffsetX: faceXInput ? parseFloat(faceXInput.value) || 0 : 0,
+      faceOffsetY: faceYInput ? parseFloat(faceYInput.value) || 0 : 0,
+      faceZoom: zoomInput ? parseFloat(zoomInput.value) || 1.15 : 1.15,
+      faceFlipX: flipInput ? !!flipInput.checked : false,
+      useHelmet: helmetInput ? !!helmetInput.checked : true,
+      fullPhoto: fullPhotoInput ? !!fullPhotoInput.checked : false
     });
 
     const syncSliderState = () => {
-      const isSkater = !bodySkaterInput || bodySkaterInput.checked;
-      if (zoomInput && zoomInput.parentElement) zoomInput.parentElement.classList.toggle('is-disabled', !isSkater);
-      if (offsetYInput && offsetYInput.parentElement) offsetYInput.parentElement.classList.toggle('is-disabled', !isSkater);
+      const isFull = fullPhotoInput && fullPhotoInput.checked;
+      [faceXInput, faceYInput, zoomInput].forEach(inp => {
+        if (inp && inp.parentElement) inp.parentElement.classList.toggle('is-disabled', !!isFull);
+      });
+      if (helmetInput && helmetInput.parentElement) {
+        helmetInput.parentElement.classList.toggle('is-disabled', !!isFull);
+      }
+      if (dragHint) dragHint.hidden = !loadedRawImg || !!isFull;
     };
 
     const refreshPreview = () => {
@@ -645,31 +725,104 @@ class Game {
       preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, getOptions());
       preview.hidden = false;
       prompt.style.display = 'none';
+      dropArea.classList.add('has-photo');
     };
 
-    const showPreview = (file) => {
+    const setRawImage = (img) => {
+      loadedRawImg = img;
+      showCameraError('');
+      refreshPreview();
+    };
+
+    const showPreviewFile = (file) => {
       if (!file || !file.type.startsWith('image/')) return;
-      selectedFile = file;
+      stopCamera();
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
-        img.onload = () => {
-          loadedRawImg = img;
-          refreshPreview();
-        };
+        img.onload = () => setRawImage(img);
         img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     };
 
-    if (bodySkaterInput) bodySkaterInput.addEventListener('change', refreshPreview);
-    if (zoomInput) zoomInput.addEventListener('input', refreshPreview);
-    if (offsetYInput) offsetYInput.addEventListener('input', refreshPreview);
+    // Botões de origem (galeria e câmera)
+    if (btnGallery) btnGallery.addEventListener('click', () => { stopCamera(); fileInput.click(); });
+    if (btnCamera) btnCamera.addEventListener('click', () => startCamera());
+    if (btnCancelCam) btnCancelCam.addEventListener('click', () => stopCamera());
+    if (btnFlipCam) {
+      btnFlipCam.addEventListener('click', () => {
+        facingMode = facingMode === 'user' ? 'environment' : 'user';
+        startCamera();
+      });
+    }
+    if (btnCapture) {
+      btnCapture.addEventListener('click', () => {
+        if (!cameraVideo || !cameraVideo.videoWidth) return;
+        const snap = document.createElement('canvas');
+        snap.width = cameraVideo.videoWidth;
+        snap.height = cameraVideo.videoHeight;
+        const sctx = snap.getContext('2d');
+        sctx.drawImage(cameraVideo, 0, 0, snap.width, snap.height);
+        stopCamera();
+        const img = new Image();
+        img.onload = () => setRawImage(img);
+        img.src = snap.toDataURL('image/png');
+      });
+    }
+
+    // Sliders e checkboxes
+    [faceXInput, faceYInput, zoomInput].forEach(el => {
+      if (el) el.addEventListener('input', refreshPreview);
+    });
+    [flipInput, helmetInput, fullPhotoInput].forEach(el => {
+      if (el) el.addEventListener('change', refreshPreview);
+    });
     syncSliderState();
 
-    dropArea.addEventListener('click', () => fileInput.click());
+    // Arrastar com dedo ou mouse direto na prévia para centralizar o rosto
+    let dragging = false;
+    let dragStartX = 0, dragStartY = 0, startOffX = 0, startOffY = 0;
+
+    dropArea.addEventListener('pointerdown', (e) => {
+      if (!loadedRawImg || (fullPhotoInput && fullPhotoInput.checked)) return;
+      dragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      startOffX = faceXInput ? parseFloat(faceXInput.value) || 0 : 0;
+      startOffY = faceYInput ? parseFloat(faceYInput.value) || 0 : 0;
+      dropArea.classList.add('is-dragging');
+      if (dropArea.setPointerCapture && e.pointerId !== undefined) {
+        try { dropArea.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+    });
+
+    dropArea.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const nx = Math.max(-0.45, Math.min(0.45, startOffX + (e.clientX - dragStartX) / 190));
+      const ny = Math.max(-0.45, Math.min(0.45, startOffY + (e.clientY - dragStartY) / 190));
+      if (faceXInput) faceXInput.value = nx.toFixed(2);
+      if (faceYInput) faceYInput.value = ny.toFixed(2);
+      refreshPreview();
+    });
+
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      dropArea.classList.remove('is-dragging');
+    };
+    dropArea.addEventListener('pointerup', endDrag);
+    dropArea.addEventListener('pointercancel', endDrag);
+
+    // Clique abre a galeria somente quando ainda não há foto carregada
+    dropArea.addEventListener('click', () => {
+      if (!loadedRawImg) fileInput.click();
+    });
     dropArea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+      if ((e.key === 'Enter' || e.key === ' ') && !loadedRawImg) {
+        e.preventDefault();
+        fileInput.click();
+      }
     });
 
     ['dragenter', 'dragover'].forEach(ev =>
@@ -677,11 +830,15 @@ class Game {
     ['dragleave', 'drop'].forEach(ev =>
       dropArea.addEventListener(ev, (e) => { e.preventDefault(); dropArea.classList.remove('dragover'); }));
 
-    dropArea.addEventListener('drop', (e) => showPreview(e.dataTransfer.files[0]));
-    fileInput.addEventListener('change', (e) => showPreview(e.target.files[0]));
+    dropArea.addEventListener('drop', (e) => showPreviewFile(e.dataTransfer.files[0]));
+    fileInput.addEventListener('change', (e) => showPreviewFile(e.target.files[0]));
 
     saveBtn.addEventListener('click', async () => {
-      if (!selectedFile) { dropArea.classList.add('dragover'); setTimeout(() => dropArea.classList.remove('dragover'), 600); return; }
+      if (!loadedRawImg) {
+        dropArea.classList.add('dragover');
+        setTimeout(() => dropArea.classList.remove('dragover'), 600);
+        return;
+      }
 
       const name = nameInput.value.trim() || 'Amigo do Luigi';
       const original = saveBtn.textContent;
@@ -689,16 +846,21 @@ class Game {
       saveBtn.disabled = true;
 
       try {
-        await window.characterManager.createCustomCharacterFromImage(selectedFile, name, getOptions());
-        selectedFile = null;
+        stopCamera();
+        await window.characterManager.createCustomCharacterFromImage(loadedRawImg, name, getOptions());
         loadedRawImg = null;
         preview.hidden = true;
+        if (dragHint) dragHint.hidden = true;
+        dropArea.classList.remove('has-photo');
         prompt.style.display = '';
         nameInput.value = '';
         fileInput.value = '';
-        if (bodySkaterInput) bodySkaterInput.checked = true;
-        if (zoomInput) zoomInput.value = '1.10';
-        if (offsetYInput) offsetYInput.value = '0';
+        if (faceXInput) faceXInput.value = '0';
+        if (faceYInput) faceYInput.value = '0';
+        if (zoomInput) zoomInput.value = '1.15';
+        if (flipInput) flipInput.checked = false;
+        if (helmetInput) helmetInput.checked = true;
+        if (fullPhotoInput) fullPhotoInput.checked = false;
         syncSliderState();
         this.showCharacterSelect();
       } catch (err) {

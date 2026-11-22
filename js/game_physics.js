@@ -224,6 +224,8 @@ class Player {
     this.currentPose = 'skate';
     this.prevPose = 'skate';
     this.poseBlend = 1;
+    this.stridePhase = 0;
+    this.rigPose = null;
     this.animTime = 0;
     this.landingImpact = 0;
     this.lastLandingImpact = 0;
@@ -1285,8 +1287,12 @@ class Player {
       this.lean = this.pitch;
     }
 
-    // Rotação real das rodinhas e vibração da superfície
+    // Rotação real das rodinhas, passada de patins/BMX e vibração da superfície
     this.wheelSpin += this.onGround ? this.speed * 0.22 : this.speed * 0.07;
+    if (this.onGround && !this.isGrinding) {
+      const strideRate = this.isAccelerating ? 0.026 : 0.015;
+      this.stridePhase = (this.stridePhase + this.speed * strideRate) % (Math.PI * 2);
+    }
 
     if (this.onGround) {
       this.wheelPhase += this.speed * 0.085;
@@ -1415,18 +1421,48 @@ class Player {
     return 'skate';
   }
 
+  /** Cinemática inversa de 2 ossos (quadril->joelho->pé ou ombro->cotovelo->mão). */
+  static solve2BoneIK(ax, ay, bx, by, len1, len2, bendDir = 1) {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const distRaw = Math.hypot(dx, dy) || 0.0001;
+    const maxDist = Math.max(0.001, len1 + len2 - 0.5);
+    const minDist = Math.abs(len1 - len2) + 0.5;
+    const dist = Math.max(minDist, Math.min(maxDist, distRaw));
+
+    const baseAngle = Math.atan2(dy, dx);
+    const cosA = Math.max(-1, Math.min(1, (len1 * len1 + dist * dist - len2 * len2) / (2 * len1 * dist)));
+    const jointAngle = baseAngle + bendDir * Math.acos(cosA);
+    return {
+      jx: ax + Math.cos(jointAngle) * len1,
+      jy: ay + Math.sin(jointAngle) * len1
+    };
+  }
+
+  /**
+   * Desenha uma peça ilustrada de membro conectando exatamente o pivô (x1, y1) ao pivô (x2, y2).
+   * px1,py1 e px2,py2 são os pivôs normalizados (0..1) dentro da imagem.
+   */
+  static drawRigPart(ctx, img, x1, y1, x2, y2, px1, py1, px2, py2, drawW, drawH, alphaMult = 1) {
+    if (!img) return;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const ang = Math.atan2(dy, dx);
+    const imgAng = Math.atan2((py2 - py1) * drawH, (px2 - px1) * drawW);
+
+    ctx.save();
+    if (alphaMult < 1) ctx.globalAlpha *= alphaMult;
+    ctx.translate(x1, y1);
+    ctx.rotate(ang - imgAng);
+    ctx.drawImage(img, -px1 * drawW, -py1 * drawH, drawW, drawH);
+    ctx.restore();
+  }
+
   draw(ctx) {
     const char = window.characterManager.getSelected();
     if (!char) return;
 
     const cm = window.characterManager;
-    const pose = this.getPose();
-    const useRiderSprite = this.sportId !== 'skate' && typeof cm.getRiderSprite === 'function';
-    const sprite = useRiderSprite ? (cm.getRiderSprite(char.id, pose) || cm.getSprite(char.id, pose)) : cm.getSprite(char.id, pose);
-    const prevSprite = (this.poseBlend < 1 && this.prevPose !== pose)
-      ? (useRiderSprite ? (cm.getRiderSprite(char.id, this.prevPose) || cm.getSprite(char.id, this.prevPose)) : cm.getSprite(char.id, this.prevPose))
-      : null;
-
     const footY = this.bottom + this.bob;
     const centerX = this.x + this.width * 0.5;
 
@@ -1435,6 +1471,38 @@ class Player {
 
     // Contraluz integrada ao bioma atual
     this.drawBacklight(ctx, centerX, footY);
+
+    // Pisca durante a invencibilidade, mas nunca some por completo
+    const blinking = this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0;
+    const baseAlpha = blinking ? 0.3 : 1;
+
+    // Animação 2D Cutout (Puppet Rig com peças ilustradas reais de assets/rig/*.png)
+    const rig = (cm && typeof cm.getRigParts === 'function') ? cm.getRigParts() : null;
+    if (rig && rig.ready && !char.fullPhoto) {
+      // Rastro sutil em alta velocidade / turbo / Super Flip
+      for (const ghost of this.trail) {
+        ctx.save();
+        ctx.globalAlpha = ghost.life * 0.16;
+        this.drawCutoutRig(ctx, char, rig, ghost.x + this.width * 0.5, ghost.y + this.getCurrentHeight(), true);
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.globalAlpha = baseAlpha;
+      this.drawCutoutRig(ctx, char, rig, centerX, footY, false);
+      ctx.restore();
+
+      if (this.hasShield) this.drawShield(ctx, centerX, footY);
+      if (this.turboTimer > 0) this.drawTurboAura(ctx, centerX, footY);
+      return;
+    }
+
+    const pose = this.getPose();
+    const useRiderSprite = this.sportId !== 'skate' && typeof cm.getRiderSprite === 'function';
+    const sprite = useRiderSprite ? (cm.getRiderSprite(char.id, pose) || cm.getSprite(char.id, pose)) : cm.getSprite(char.id, pose);
+    const prevSprite = (this.poseBlend < 1 && this.prevPose !== pose)
+      ? (useRiderSprite ? (cm.getRiderSprite(char.id, this.prevPose) || cm.getSprite(char.id, this.prevPose)) : cm.getSprite(char.id, this.prevPose))
+      : null;
 
     // Rastro de velocidade / turbo / Super Flip
     for (const ghost of this.trail) {
@@ -1445,10 +1513,6 @@ class Player {
       this.paintSprite(ctx, sprite, char, 0, this.getCurrentHeight() * 0.5, 1, 1);
       ctx.restore();
     }
-
-    // Pisca durante a invencibilidade, mas nunca some por completo
-    const blinking = this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0;
-    const baseAlpha = blinking ? 0.3 : 1;
 
     ctx.save();
     ctx.globalAlpha = baseAlpha;
@@ -1496,6 +1560,365 @@ class Player {
 
     if (this.hasShield) this.drawShield(ctx, centerX, footY);
     if (this.turboTimer > 0) this.drawTurboAura(ctx, centerX, footY);
+  }
+
+  /**
+   * Animação 2D Cutout (Puppet Rig com IK de 2 ossos) usando as peças ilustradas
+   * oficiais em assets/rig/*.png — mantém 100% da arte do Luigi (e cabeças de foto)
+   * com movimentos verdadeiramente articulados e fluidos em todos os 4 esportes.
+   */
+  drawCutoutRig(ctx, char, rig, centerX, footY, isGhost) {
+    const cm = window.characterManager;
+    const scale = (this.height || 130) / 130;
+    const sportId = this.sportId || 'skate';
+    const trickStyle = this.trickState ? this.trickState.style : null;
+    const trickName = this.trickState ? this.trickState.name : '';
+    const isFlip = trickStyle === 'flip';
+    const isSpin = trickStyle === 'spin';
+    const isGrab = trickStyle === 'grab';
+    const isSuper = trickStyle === 'super';
+    const isSuperman = trickName === 'SUPERMAN';
+    const isNoHander = trickName === 'NO-HANDER';
+
+    // ---- 1. Alvos cinemáticos (pés, quadril, tronco, cabeça, mãos, equipamento) ----
+    const breathe = Math.sin(this.animTime * 0.085) * 1.4;
+    const baseDeckY = sportId === 'bmx' ? -18 : (sportId === 'skates' ? -9 : -12);
+    const targetDeckDropY = (isFlip || isSuper) ? Math.sin(this.trickProgress * Math.PI) * 15 : 0;
+    const targetDeckAngle = this.boardTilt + (this.isGrinding ? Math.sin(this.wheelPhase * 1.6) * 0.045 : 0);
+
+    const cosB = Math.cos(targetDeckAngle);
+    const sinB = Math.sin(targetDeckAngle);
+    const deckY = baseDeckY + targetDeckDropY;
+
+    // Pés ancorados por esporte
+    let targetRearFootX = -17 * cosB;
+    let targetRearFootY = deckY - 3 - 17 * sinB;
+    let targetFrontFootX = 18 * cosB;
+    let targetFrontFootY = deckY - 3 + 18 * sinB;
+
+    if (sportId === 'bmx') {
+      // Pés nos pedais da BMX (girando suavemente ao acelerar)
+      const pedalA = this.isAccelerating && this.onGround ? this.stridePhase * 1.6 : 0.4;
+      targetRearFootX = -4 - Math.cos(pedalA) * 9;
+      targetRearFootY = -18 - Math.sin(pedalA) * 7;
+      targetFrontFootX = -4 + Math.cos(pedalA) * 9;
+      targetFrontFootY = -18 + Math.sin(pedalA) * 7;
+      if (isSuperman) {
+        // Superman na BMX: pernas esticadas para trás no ar!
+        const sup = Math.sin(this.trickProgress * Math.PI);
+        targetRearFootX -= sup * 34;
+        targetRearFootY -= sup * 26;
+        targetFrontFootX -= sup * 26;
+        targetFrontFootY -= sup * 24;
+      }
+    } else if (sportId === 'skates' && this.onGround && !this.isGrinding && !this.isOnRamp && !this.isDucking) {
+      // Passada fluida alternada de patinação
+      const s = Math.sin(this.stridePhase);
+      const c = Math.cos(this.stridePhase);
+      const amp = this.isAccelerating ? 16 : 9;
+      targetRearFootX = -6 - s * amp;
+      targetRearFootY = -9 - Math.max(0, c) * (this.isAccelerating ? 7 : 3);
+      targetFrontFootX = 6 + s * amp;
+      targetFrontFootY = -9 - Math.max(0, -c) * (this.isAccelerating ? 7 : 3);
+    } else if (this.pushBlend > 0.02 && this.onGround && (sportId === 'skate' || sportId === 'scooter')) {
+      // Remada real: pé traseiro sai do deck, toca o asfalto (y=-2) e empurra em arco para trás!
+      const ph = this.pushPhase * Math.PI * 2;
+      const pushX = -6 - Math.sin(ph) * 25;
+      const pushY = -2 - Math.max(0, -Math.cos(ph)) * 13;
+      targetRearFootX = targetRearFootX + (pushX - targetRearFootX) * this.pushBlend;
+      targetRearFootY = targetRearFootY + (pushY - targetRearFootY) * this.pushBlend;
+    }
+
+    // Movimento de pernas no ar (ollie, ápice recolhido, descida buscando chão, manobras)
+    if (!this.onGround && !isSuperman) {
+      if (isFlip || isSuper) {
+        // Recolhe joelhos bem alto acima do shape girando + catch no final
+        const tuck = Math.sin(this.trickProgress * Math.PI);
+        targetRearFootY -= tuck * 21;
+        targetFrontFootY -= tuck * 19;
+        targetRearFootX -= tuck * 4;
+        targetFrontFootX += tuck * 3;
+      } else if (this.olliePopTimer > 0) {
+        // Batida do tail no ollie: pé traseiro empurra para baixo, dianteiro sobe
+        const pop = Math.sin((this.olliePopTimer / 15) * Math.PI);
+        targetFrontFootY -= pop * 9;
+        targetRearFootY += pop * 2;
+      } else if (this.vy < 3) {
+        // Recolhimento leve perto do ápice do salto
+        const apexTuck = Math.max(0, 1 - Math.abs(this.vy) / 10) * 8;
+        targetRearFootY -= apexTuck;
+        targetFrontFootY -= apexTuck;
+      } else {
+        // Estica suavemente buscando a pista na descida
+        const reach = Math.min(6, (this.vy - 3) * 0.45);
+        targetRearFootY += reach * 0.5;
+        targetFrontFootY += reach * 0.5;
+      }
+    }
+
+    // Quadril e tronco com flexão real de joelhos (agachamento, pouso, força G da rampa)
+    const crouchDrop = this.crouchBlend * 24 + (1 - this.squash) * 26;
+    const airLift = (!this.onGround ? Math.min(11, Math.max(0, -this.vy * 0.48)) : 0)
+      + ((isFlip || isSuper) ? Math.sin(this.trickProgress * Math.PI) * 14 : 0);
+    const bmxLift = sportId === 'bmx' ? -7 : 0;
+
+    const targetHipX = -2 + this.pushBlend * 6 + (this.isBraking ? -6 : 0) + (isSuperman ? -14 * Math.sin(this.trickProgress * Math.PI) : 0);
+    const targetHipY = Math.min(-34, -56 + bmxLift + crouchDrop - airLift + breathe * 0.6);
+
+    const targetTorsoLean = 0.13
+      + this.crouchBlend * 0.40
+      + this.pushBlend * 0.22
+      + (this.isGrinding ? -0.05 : 0)
+      + (this.isBraking ? -0.18 : 0)
+      + (isGrab ? 0.34 : 0)
+      + (isSuperman ? 0.62 * Math.sin(this.trickProgress * Math.PI) : 0);
+
+    const targetHeadTilt = -targetTorsoLean * 0.38 + (this.isOnRamp ? -0.12 : 0) + (this.isAccelerating ? 0.06 : 0);
+
+    // Ombros provisórios para calcular alvos das mãos
+    const torsoBone = 30;
+    const tmpShoulderX = targetHipX + Math.sin(targetTorsoLean) * torsoBone;
+    const tmpShoulderY = targetHipY - Math.cos(targetTorsoLean) * torsoBone;
+
+    const sway = Math.sin(this.animTime * 0.11) * 3.5;
+    let targetBackHandX = tmpShoulderX - 21 + sway;
+    let targetBackHandY = tmpShoulderY + 17 + Math.cos(this.animTime * 0.11) * 3;
+    let targetFrontHandX = tmpShoulderX + 24 - sway;
+    let targetFrontHandY = tmpShoulderY + 14 - Math.cos(this.animTime * 0.11) * 3;
+
+    if ((sportId === 'bmx' || sportId === 'scooter') && !isNoHander && !isGrab) {
+      // Mãos presas ao guidão via IK!
+      const barX = sportId === 'bmx' ? 18 : 20;
+      const barY = sportId === 'bmx' ? -71 : -76;
+      targetBackHandX = barX - 4;
+      targetBackHandY = barY + 1;
+      targetFrontHandX = barX + 3;
+      targetFrontHandY = barY + 2;
+      if (this.pushBlend > 0.1 && sportId === 'scooter') {
+        // Na remada do patinete, mão traseira solta um pouco para contrapeso
+        const ph = this.pushPhase * Math.PI * 2;
+        targetBackHandX = tmpShoulderX - 14 + Math.sin(ph) * 14 * this.pushBlend;
+        targetBackHandY = tmpShoulderY + 16;
+      }
+    } else if (isNoHander) {
+      // No-Hander no Patinete: braços abertos para cima!
+      const nh = Math.sin(this.trickProgress * Math.PI);
+      targetBackHandX = tmpShoulderX - 28 * nh;
+      targetBackHandY = tmpShoulderY - 12 * nh;
+      targetFrontHandX = tmpShoulderX + 30 * nh;
+      targetFrontHandY = tmpShoulderY - 14 * nh;
+    } else if (this.isGrinding) {
+      // Equilíbrio dinâmico de braços abertos no Grind
+      const bal = Math.sin(this.wheelPhase * 1.6) * 9;
+      targetBackHandX = tmpShoulderX - 31;
+      targetBackHandY = tmpShoulderY + 2 + bal;
+      targetFrontHandX = tmpShoulderX + 32;
+      targetFrontHandY = tmpShoulderY + 2 - bal;
+    } else if (isGrab) {
+      // Indy Grab / Mute Grab / Soul Grab: mão traseira alcança e segura a borda do shape/patins!
+      const gb = Math.sin(this.trickProgress * Math.PI);
+      const gx = 5;
+      const gy = deckY - 3;
+      targetBackHandX = targetBackHandX + (gx - targetBackHandX) * gb;
+      targetBackHandY = targetBackHandY + (gy - targetBackHandY) * gb;
+      targetFrontHandX = tmpShoulderX + 30;
+      targetFrontHandY = tmpShoulderY - 9;
+    } else if (sportId === 'skates' && this.onGround && !this.isDucking) {
+      // Balanço ritmado oposto às pernas na patinação
+      const swing = Math.sin(this.stridePhase) * (this.isAccelerating ? 18 : 10);
+      targetBackHandX = tmpShoulderX - 10 + swing;
+      targetBackHandY = tmpShoulderY + 18;
+      targetFrontHandX = tmpShoulderX + 14 - swing;
+      targetFrontHandY = tmpShoulderY + 15;
+    } else if (this.pushBlend > 0.05) {
+      // Contrapeso dos braços na remada
+      const ph = this.pushPhase * Math.PI * 2;
+      const swing = Math.sin(ph) * 16 * this.pushBlend;
+      targetBackHandX = tmpShoulderX - 14 + swing;
+      targetBackHandY = tmpShoulderY + 18;
+      targetFrontHandX = tmpShoulderX + 22 - swing;
+      targetFrontHandY = tmpShoulderY + 12;
+    } else if (!this.onGround) {
+      // Braços abertos/erguidos no ar
+      targetBackHandX = tmpShoulderX - 27;
+      targetBackHandY = tmpShoulderY - 3;
+      targetFrontHandX = tmpShoulderX + 29;
+      targetFrontHandY = tmpShoulderY - 7;
+    } else if (this.isDucking) {
+      targetBackHandX = tmpShoulderX - 18;
+      targetBackHandY = tmpShoulderY + 14;
+      targetFrontHandX = tmpShoulderX + 22;
+      targetFrontHandY = tmpShoulderY + 12;
+    }
+
+    // ---- 2. Interpolação suave das juntas (zero estalos entre poses!) ----
+    if (!this.rigPose) {
+      this.rigPose = {
+        hipX: targetHipX, hipY: targetHipY, torsoLean: targetTorsoLean, headTilt: targetHeadTilt,
+        rearFootX: targetRearFootX, rearFootY: targetRearFootY,
+        frontFootX: targetFrontFootX, frontFootY: targetFrontFootY,
+        backHandX: targetBackHandX, backHandY: targetBackHandY,
+        frontHandX: targetFrontHandX, frontHandY: targetFrontHandY,
+        deckAngle: targetDeckAngle, deckDropY: targetDeckDropY
+      };
+    } else if (!isGhost) {
+      const k = 0.30;
+      const p = this.rigPose;
+      p.hipX += (targetHipX - p.hipX) * k;
+      p.hipY += (targetHipY - p.hipY) * k;
+      p.torsoLean += (targetTorsoLean - p.torsoLean) * k;
+      p.headTilt += (targetHeadTilt - p.headTilt) * k;
+      p.rearFootX += (targetRearFootX - p.rearFootX) * 0.36;
+      p.rearFootY += (targetRearFootY - p.rearFootY) * 0.36;
+      p.frontFootX += (targetFrontFootX - p.frontFootX) * 0.36;
+      p.frontFootY += (targetFrontFootY - p.frontFootY) * 0.36;
+      p.backHandX += (targetBackHandX - p.backHandX) * 0.28;
+      p.backHandY += (targetBackHandY - p.backHandY) * 0.28;
+      p.frontHandX += (targetFrontHandX - p.frontHandX) * 0.28;
+      p.frontHandY += (targetFrontHandY - p.frontHandY) * 0.28;
+      p.deckAngle += (targetDeckAngle - p.deckAngle) * 0.32;
+      p.deckDropY += (targetDeckDropY - p.deckDropY) * 0.32;
+    }
+
+    const rp = this.rigPose;
+    const shoulderX = rp.hipX + Math.sin(rp.torsoLean) * torsoBone;
+    const shoulderY = rp.hipY - Math.cos(rp.torsoLean) * torsoBone;
+    const neckX = rp.hipX + Math.sin(rp.torsoLean) * 34;
+    const neckY = rp.hipY - Math.cos(rp.torsoLean) * 34;
+
+    // ---- 3. Solução IK de 2 ossos para joelhos e cotovelos ----
+    // Comprimentos exatos das peças em assets/rig/*.png
+    const thighLen = 24.5;
+    const shinLen = 28.1;
+    const upperArmLen = 17.7;
+    const lowerArmLen = 19.2;
+
+    const rearKnee = Player.solve2BoneIK(rp.hipX - 4, rp.hipY + 2, rp.rearFootX, rp.rearFootY, thighLen, shinLen, -1);
+    const frontKnee = Player.solve2BoneIK(rp.hipX + 4, rp.hipY + 2, rp.frontFootX, rp.frontFootY, thighLen, shinLen, -1);
+    const backElbow = Player.solve2BoneIK(shoulderX - 4, shoulderY + 3, rp.backHandX, rp.backHandY, upperArmLen, lowerArmLen, 1);
+    const frontElbow = Player.solve2BoneIK(shoulderX + 4, shoulderY + 3, rp.frontHandX, rp.frontHandY, upperArmLen, lowerArmLen, 1);
+
+    // ---- 4. Renderização em camadas de profundidade (trás -> frente) ----
+    ctx.save();
+    ctx.translate(centerX, footY);
+    ctx.scale(scale, scale);
+
+    // Rotação de corpo inteiro em manobras de giro/grab
+    if (isSpin || isSuper) {
+      ctx.translate(0, -64);
+      ctx.rotate(isSuper ? this.rotation * 1.5 : this.rotation);
+      ctx.translate(0, 64);
+    } else if (isGrab) {
+      const grabTilt = -Math.sin(this.trickProgress * Math.PI) * 0.34;
+      ctx.translate(0, -56);
+      ctx.rotate(grabTilt);
+      ctx.translate(0, 56);
+    } else {
+      ctx.rotate(this.pitch);
+    }
+
+    // 4a. Equipamento traseiro (BMX / Patinete)
+    if (sportId === 'bmx') {
+      this.drawBMXBack(ctx, 0, rp.deckDropY, 1, 1);
+    } else if (sportId === 'scooter') {
+      this.drawScooterBack(ctx, 0, rp.deckDropY, 1, 1);
+    }
+
+    // 4b. Braço traseiro (peças ilustradas reais)
+    Player.drawRigPart(ctx, rig.armUpper, shoulderX - 4, shoulderY + 3, backElbow.jx, backElbow.jy, 0.50, 0.16, 0.50, 0.84, 16, 26, 0.86);
+    Player.drawRigPart(ctx, rig.armLower, backElbow.jx, backElbow.jy, rp.backHandX, rp.backHandY, 0.50, 0.14, 0.50, 0.88, 15, 26, 0.86);
+
+    // 4c. Perna traseira (coxa cargo + canela/tênis marrom)
+    Player.drawRigPart(ctx, rig.thigh, rp.hipX - 4, rp.hipY + 2, rearKnee.jx, rearKnee.jy, 0.50, 0.16, 0.50, 0.84, 24, 36, 0.86);
+    Player.drawRigPart(ctx, rig.shinShoe, rearKnee.jx, rearKnee.jy, rp.rearFootX, rp.rearFootY, 0.42, 0.14, 0.52, 0.92, 25, 36, 0.88);
+    if (sportId === 'skates') {
+      this.drawSingleInlineSkate(ctx, rp.rearFootX, rp.rearFootY + 2, true);
+    }
+
+    // 4d. Skate ilustrado independente (com giro 3D real no Kickflip / Super Flip!)
+    if (sportId === 'skate' && rig.skateboard) {
+      ctx.save();
+      ctx.translate(0, baseDeckY + rp.deckDropY);
+      ctx.rotate(rp.deckAngle);
+      const flipScaleY = (isFlip || isSuper) ? Math.cos(this.boardFlipAngle) : 1;
+      const safeScaleY = Math.abs(flipScaleY) < 0.18 ? (flipScaleY >= 0 ? 0.18 : -0.18) : flipScaleY;
+      ctx.scale(1, safeScaleY);
+      const bw = 88, bh = 27;
+      ctx.drawImage(rig.skateboard, -bw * 0.50, -bh * 0.42, bw, bh);
+      ctx.restore();
+    }
+
+    // 4e. Tronco ilustrado (camisa xadrez azul-marinho/vermelho + camiseta Sk8 KID)
+    if (rig.torso) {
+      ctx.save();
+      ctx.translate(rp.hipX, rp.hipY);
+      ctx.rotate(rp.torsoLean);
+      const tw = 40, th = 47;
+      ctx.drawImage(rig.torso, -tw * 0.50, -th * 0.86, tw, th);
+      ctx.restore();
+    }
+
+    // 4f. Perna dianteira (coxa cargo + canela/tênis marrom)
+    Player.drawRigPart(ctx, rig.thigh, rp.hipX + 4, rp.hipY + 2, frontKnee.jx, frontKnee.jy, 0.50, 0.16, 0.50, 0.84, 24, 36, 1);
+    Player.drawRigPart(ctx, rig.shinShoe, frontKnee.jx, frontKnee.jy, rp.frontFootX, rp.frontFootY, 0.42, 0.14, 0.52, 0.92, 25, 36, 1);
+    if (sportId === 'skates') {
+      this.drawSingleInlineSkate(ctx, rp.frontFootX, rp.frontFootY + 2, false);
+    }
+
+    // 4g. Cabeça (foto personalizada do Estúdio com capacete SK8 OU cabeça oficial do Luigi!)
+    const customHead = (cm && typeof cm.getHeadImage === 'function') ? cm.getHeadImage(char.id) : null;
+    const headImg = (customHead && customHead.width > 0) ? customHead : rig.head;
+    if (headImg) {
+      ctx.save();
+      ctx.translate(neckX, neckY);
+      ctx.rotate(rp.torsoLean * 0.55 + rp.headTilt);
+      const hs = 48;
+      ctx.drawImage(headImg, -hs * 0.50, -hs * 0.84, hs, hs);
+      ctx.restore();
+    }
+
+    // 4h. Equipamento frontal (guidão BMX / haste Patinete)
+    if (sportId === 'bmx') {
+      this.drawBMXFront(ctx, 0, rp.deckDropY, 1, 1);
+    } else if (sportId === 'scooter') {
+      this.drawScooterFront(ctx, 0, rp.deckDropY, 1, 1);
+    }
+
+    // 4i. Braço dianteiro (à frente do tronco e do guidão!)
+    Player.drawRigPart(ctx, rig.armUpper, shoulderX + 4, shoulderY + 3, frontElbow.jx, frontElbow.jy, 0.50, 0.16, 0.50, 0.84, 16, 26, 1);
+    Player.drawRigPart(ctx, rig.armLower, frontElbow.jx, frontElbow.jy, rp.frontHandX, rp.frontHandY, 0.50, 0.14, 0.50, 0.88, 15, 26, 1);
+
+    ctx.restore();
+  }
+
+  /** Desenha um único patins inline acoplado à posição exata do pé no IK. */
+  drawSingleInlineSkate(ctx, fx, fy, isBack) {
+    ctx.save();
+    ctx.translate(fx, fy);
+    ctx.fillStyle = isBack ? '#94a3b8' : '#e2e8f0';
+    ctx.fillRect(-13, -3.5, 26, 3.8);
+    ctx.fillStyle = isBack ? '#0284c7' : '#22d3ee';
+    ctx.fillRect(-10, -7.5, 20, 4.2);
+
+    for (let i = 0; i < 4; i++) {
+      const wx = -10 + i * 6.8;
+      const wy = 2.2;
+      ctx.fillStyle = isBack ? '#fbbf24' : '#34d399';
+      ctx.beginPath();
+      ctx.arc(wx, wy, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0f172a';
+      ctx.beginPath();
+      ctx.arc(wx, wy, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(wx + Math.cos(this.wheelSpin) * 2.6, wy + Math.sin(this.wheelSpin) * 2.6);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /** Desenha o sprite com crossfade suave de 4-5 frames ao trocar de pose + equipamento do esporte. */
