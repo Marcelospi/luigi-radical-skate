@@ -155,6 +155,7 @@ class LeaderboardManager {
     this.STORAGE_KEY = 'luigi_skate_leaderboard';
     this.CLEANED_FLAG = 'luigi_skate_cleaned_anon_scores_v3';
     this.cleanLegacyScores();
+    this.stripHeavyPortraits();
   }
 
   // Zera as pontuações salvas hoje que não tinham nome
@@ -164,6 +165,23 @@ class LeaderboardManager {
         localStorage.removeItem('luigi_skate_high_score');
         localStorage.setItem(this.STORAGE_KEY, JSON.stringify([]));
         localStorage.setItem(this.CLEANED_FLAG, 'true');
+      }
+    } catch (_) {}
+  }
+
+  /** Remove eventuais Data URLs base64 antigos do placar para evitar QuotaExceededError. */
+  stripHeavyPortraits() {
+    try {
+      const list = this.getAll();
+      let changed = false;
+      for (const item of list) {
+        if (typeof item.characterPortrait === 'string' && item.characterPortrait.startsWith('data:')) {
+          item.characterPortrait = 'assets/portraits/portrait_luigi_3d.png';
+          changed = true;
+        }
+      }
+      if (changed) {
+        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(list));
       }
     } catch (_) {}
   }
@@ -178,7 +196,18 @@ class LeaderboardManager {
     }
   }
 
-  addEntry({ name, score, distance, characterName, characterPortrait, sportId, sportIcon }) {
+  saveList(list) {
+    const trimmed = list.slice(0, 40);
+    try {
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(trimmed));
+      if (trimmed.length > 0) {
+        writeNumber('luigi_skate_high_score', trimmed[0].score);
+      }
+    } catch (_) {}
+    return trimmed;
+  }
+
+  addEntry({ name, score, distance, characterId, characterName, characterPortrait, sportId, sportIcon }) {
     const list = this.getAll();
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -187,13 +216,19 @@ class LeaderboardManager {
     const hours = String(now.getHours()).padStart(2, '0');
     const minutes = String(now.getMinutes()).padStart(2, '0');
 
+    // Nunca grava Data URL base64 gigante no placar (evita QuotaExceededError no localStorage)
+    const safePortrait = (typeof characterPortrait === 'string' && !characterPortrait.startsWith('data:'))
+      ? characterPortrait
+      : 'assets/portraits/portrait_luigi_3d.png';
+
     const entry = {
       id: 'score_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-      name: (name || 'Luigi').trim(),
+      name: (name || 'Skatista').trim(),
       score: Math.max(0, Math.floor(score)),
       distance: Math.max(0, Math.floor(distance)),
-      characterName: characterName || 'Luigi',
-      characterPortrait: characterPortrait || 'assets/portraits/portrait_luigi_3d.png',
+      characterId: characterId || 'luigi_3d',
+      characterName: characterName || 'Luigi 3D',
+      characterPortrait: safePortrait,
       sportId: sportId || 'skate',
       sportIcon: sportIcon || '🛹',
       date: `${day}/${month}/${year}`,
@@ -204,16 +239,20 @@ class LeaderboardManager {
     list.push(entry);
     // Ordena do maior ponto para o menor
     list.sort((a, b) => b.score - a.score);
-    // Guarda até 40 pontuações
-    const trimmed = list.slice(0, 40);
-    try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(trimmed));
-      if (trimmed.length > 0) {
-        writeNumber('luigi_skate_high_score', trimmed[0].score);
-      }
-    } catch (_) {}
+    this.saveList(list);
 
     return entry;
+  }
+
+  /** Atualiza o nome de uma entrada já salva nesta partida sem duplicar no placar. */
+  updateEntryName(entryId, newName) {
+    if (!entryId) return null;
+    const list = this.getAll();
+    const target = list.find(item => item.id === entryId);
+    if (!target) return null;
+    target.name = (newName || 'Skatista').trim();
+    this.saveList(list);
+    return target;
   }
 
   clear() {
@@ -255,6 +294,10 @@ class Game {
     this.comboBankTimer = 0;
     this.comboBankMult = 1;
     this.comboBankPoints = 0;
+    this._scoreSavedThisRun = false;
+    this._lastSavedEntryId = null;
+    this._onlineSavedThisRun = false;
+    this.leaderboardTab = 'global';
     this._popTimers = {};
 
     this.el = {
@@ -363,8 +406,17 @@ class Game {
       if (e.code === 'KeyM') this.toggleMute();
 
       if (e.code === 'Enter') {
-        if (this.state === 'MENU' || this.state === 'GAME_OVER' || this.state === 'SELECT_CHAR') this.startPlay();
-        else if (this.state === 'PAUSED') this.resumeGame();
+        if (this.state === 'GAME_OVER') {
+          // Não dispara se o foco estiver no campo de nome (deixa o form enviar normalmente)
+          if (document.activeElement !== this.el.playerNameInput) {
+            this.flushOnlineScoreIfNeeded();
+            this.startPlay();
+          }
+        } else if (this.state === 'MENU' || this.state === 'SELECT_CHAR') {
+          this.startPlay();
+        } else if (this.state === 'PAUSED') {
+          this.resumeGame();
+        }
       }
     });
 
@@ -437,19 +489,21 @@ class Game {
     on('btn-pause-hud', () => this.pauseGame());
     on('btn-resume', () => this.resumeGame());
     on('btn-pause-menu', () => this.setState('MENU'), 'back');
-    on('btn-restart', () => this.startPlay());
-    on('btn-gameover-menu', () => this.setState('MENU'), 'back');
+    on('btn-restart', () => { this.flushOnlineScoreIfNeeded(); this.startPlay(); });
+    on('btn-gameover-menu', () => { this.flushOnlineScoreIfNeeded(); this.setState('MENU'); }, 'back');
     on('btn-mute-hud', () => this.toggleMute(), null);
+    on('tab-lb-global', () => this.switchLeaderboardTab('global'));
+    on('tab-lb-local', () => this.switchLeaderboardTab('local'));
 
-    // Salvar pontuação com nome no placar
-    const saveScoreHandler = (e) => {
-      if (e) e.preventDefault();
-      this.saveScoreFromGameOver();
-    };
-
+    // Salvar / atualizar pontuação com nome no placar (apenas submit evita disparo duplo)
     const form = document.getElementById('form-save-score');
-    if (form) form.addEventListener('submit', saveScoreHandler);
-    on('btn-save-score', saveScoreHandler);
+    if (form) {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        window.soundSystem.init();
+        this.saveScoreFromGameOver({ auto: false });
+      });
+    }
 
     document.querySelectorAll('.btn-back-menu').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -941,6 +995,9 @@ class Game {
     this.comboBankTimer = 0;
     this.comboBankMult = 1;
     this.comboBankPoints = 0;
+    this._scoreSavedThisRun = false;
+    this._lastSavedEntryId = null;
+    this._onlineSavedThisRun = false;
 
     this.setState('PLAYING');
     window.soundSystem.startMusic();
@@ -972,6 +1029,8 @@ class Game {
     delete this.wrapper.dataset.speedFx;
 
     const p = this.player;
+    const prevTopScore = this.leaderboard.getTopScore();
+
     document.getElementById('final-score').textContent = formatNumber(p.score);
     document.getElementById('final-distance').textContent = Math.floor(p.distance) + 'm';
     document.getElementById('final-coins').textContent = p.coins;
@@ -990,43 +1049,102 @@ class Game {
       this.el.registerFeedback.hidden = true;
     }
 
-    // Renderiza a lista atualizada de líderes no Game Over
-    this.renderLeaderboard('gameover-leaderboard-list');
+    // Salva automaticamente no placar local e atualiza o Recorde (ninguém perde pontos ao sair!)
+    if (p.score > 0 && !this._scoreSavedThisRun) {
+      this.saveScoreFromGameOver({ auto: true });
+    } else {
+      this.loadLeaderboardView('gameover-leaderboard-list', 'gameover-leaderboard-status', 'global');
+    }
 
-    // Destaque de novo recorde geral
-    const topScore = this.leaderboard.getTopScore();
+    // Destaque de novo recorde geral comparado ao recorde anterior à partida
     const banner = document.getElementById('new-record-banner');
     if (banner) {
-      banner.hidden = p.score <= topScore || p.score === 0;
+      banner.hidden = p.score <= prevTopScore || p.score === 0;
     }
   }
 
-  saveScoreFromGameOver() {
+  /** Constrói o objeto completo de pontuação da partida atual para local/online. */
+  buildCurrentRunScoreEntry(nameOverride) {
     const p = this.player;
     const input = this.el.playerNameInput;
-    const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Luigi');
+    const name = (nameOverride || (input && input.value) || this.lastPlayerName || 'Skatista').trim() || 'Skatista';
+    const char = window.characterManager.getSelected();
+    const sport = this.getSportInfo(this.selectedSport);
+    const now = new Date();
+    const date = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+    const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    return {
+      name,
+      score: Math.max(0, Math.floor(p.score)),
+      distance: Math.max(0, Math.floor(p.distance)),
+      characterId: char ? char.id : 'luigi_3d',
+      characterName: char ? char.name : 'Luigi 3D',
+      characterPortrait: char ? char.portrait : 'assets/portraits/portrait_luigi_3d.png',
+      sportId: sport.id,
+      sportIcon: sport.icon,
+      date,
+      time
+    };
+  }
+
+  /** Envia a pontuação para o Placar Global 1 única vez nesta partida. */
+  async submitOnlineScoreOnce({ silent = false } = {}) {
+    if (this._onlineSavedThisRun) return { ok: true, alreadySaved: true };
+    const p = this.player;
+    if (!p || p.score <= 0) return { ok: false, reason: 'zero' };
+    if (!window.onlineLeaderboard || !window.onlineLeaderboard.submitScore) {
+      return { ok: false, reason: 'unavailable' };
+    }
+
+    // Marca antes do await para evitar qualquer envio duplicado por cliques rápidos
+    this._onlineSavedThisRun = true;
+    const payload = this.buildCurrentRunScoreEntry();
+    const res = await window.onlineLeaderboard.submitScore(payload);
+
+    if (!res || !res.ok) {
+      // Se falhou por rede, permite tentar de novo caso clique manualmente
+      if (!silent) this._onlineSavedThisRun = false;
+      return res || { ok: false };
+    }
+
+    return res;
+  }
+
+  /** Se o jogador sair do Game Over sem clicar em Gravar, envia automaticamente ao Placar Global. */
+  flushOnlineScoreIfNeeded() {
+    if (this.state !== 'GAME_OVER') return;
+    if (this._onlineSavedThisRun) return;
+    if (!this.player || this.player.score <= 0) return;
+    // Atualiza o nome local também caso tenha editado no campo antes de sair
+    const input = this.el.playerNameInput;
+    const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
+    this.lastPlayerName = name;
+    try { localStorage.setItem('luigi_skate_last_player_name', name); } catch (_) {}
+    if (this._lastSavedEntryId) {
+      this.leaderboard.updateEntryName(this._lastSavedEntryId, name);
+    }
+    this.submitOnlineScoreOnce({ silent: true });
+  }
+
+  async saveScoreFromGameOver({ auto = false } = {}) {
+    const p = this.player;
+    if (p.score <= 0) return;
+
+    const input = this.el.playerNameInput;
+    const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
     this.lastPlayerName = name;
     try { localStorage.setItem('luigi_skate_last_player_name', name); } catch (_) {}
 
-    const char = window.characterManager.getSelected();
-    const sport = this.getSportInfo(this.selectedSport);
-    const entry = this.leaderboard.addEntry({
-      name,
-      score: p.score,
-      distance: p.distance,
-      characterName: char ? char.name : 'Luigi',
-      characterPortrait: char ? (char.portrait || char.sprites.skate) : 'assets/portraits/portrait_luigi_3d.png',
-      sportId: sport.id,
-      sportIcon: sport.icon
-    });
+    let entry = null;
 
-    if (this.el.registerFeedback) {
-      this.el.registerFeedback.hidden = false;
-      this.el.registerFeedback.textContent = `🎉 Pontuação de ${name} (${formatNumber(entry.score)} pts) gravada no placar!`;
-    }
-    if (this.el.btnSaveScore) {
-      this.el.btnSaveScore.disabled = true;
-      this.el.btnSaveScore.innerHTML = '<span>✓</span> Gravado!';
+    if (this._scoreSavedThisRun && this._lastSavedEntryId) {
+      // Já foi gravado localmente nesta partida: atualiza o nome sem duplicar
+      entry = this.leaderboard.updateEntryName(this._lastSavedEntryId, name);
+    } else {
+      entry = this.leaderboard.addEntry(this.buildCurrentRunScoreEntry(name));
+      this._scoreSavedThisRun = true;
+      this._lastSavedEntryId = entry ? entry.id : null;
     }
 
     this.highScore = this.leaderboard.getTopScore();
@@ -1034,32 +1152,119 @@ class Game {
     const hs = document.getElementById('menu-highscore');
     if (hs) hs.textContent = formatNumber(this.highScore);
 
-    this.renderLeaderboard('gameover-leaderboard-list');
+    if (auto) {
+      if (this.el.registerFeedback && entry) {
+        this.el.registerFeedback.hidden = false;
+        this.el.registerFeedback.textContent = `✅ Salvo neste aparelho (${formatNumber(entry.score)} pts). Clique em "Gravar Pontuação" para enviar ao Placar Global 🌎`;
+      }
+      if (this.el.btnSaveScore) {
+        this.el.btnSaveScore.disabled = false;
+        this.el.btnSaveScore.innerHTML = '<span class="btn-icon">⭐</span> Gravar Pontuação';
+      }
+      this.loadLeaderboardView('gameover-leaderboard-list', 'gameover-leaderboard-status', 'global');
+      return;
+    }
+
+    // Envio explícito para o Placar Global Online (1 única vez por partida)
+    if (this.el.btnSaveScore) {
+      this.el.btnSaveScore.disabled = true;
+      this.el.btnSaveScore.innerHTML = '<span>⏳</span> Enviando…';
+    }
+
+    const res = await this.submitOnlineScoreOnce({ silent: false });
+    if (res && res.ok) {
+      if (this.el.registerFeedback && entry) {
+        this.el.registerFeedback.hidden = false;
+        this.el.registerFeedback.textContent = `🌎 Salvo no placar global! ${name} — ${formatNumber(entry.score)} pts`;
+      }
+      if (this.el.btnSaveScore) {
+        this.el.btnSaveScore.disabled = true;
+        this.el.btnSaveScore.innerHTML = '<span>🌎</span> Salvo no Global!';
+      }
+    } else {
+      if (this.el.registerFeedback && entry) {
+        this.el.registerFeedback.hidden = false;
+        this.el.registerFeedback.textContent = `📱 Sem internet — salvo no placar local (${name}: ${formatNumber(entry.score)} pts).`;
+      }
+      if (this.el.btnSaveScore) {
+        this.el.btnSaveScore.disabled = false;
+        this.el.btnSaveScore.innerHTML = '<span class="btn-icon">⭐</span> Tentar Enviar Global';
+      }
+    }
+
+    this.loadLeaderboardView('gameover-leaderboard-list', 'gameover-leaderboard-status', 'global');
     window.soundSystem.playCoin();
   }
 
   showLeaderboard() {
     this.setState('LEADERBOARD');
-    this.renderLeaderboard('main-leaderboard-list');
+    this.switchLeaderboardTab(this.leaderboardTab || 'global');
+  }
+
+  switchLeaderboardTab(tab) {
+    this.leaderboardTab = tab === 'local' ? 'local' : 'global';
+    const tabGlobal = document.getElementById('tab-lb-global');
+    const tabLocal = document.getElementById('tab-lb-local');
+    const clearBtn = document.getElementById('btn-clear-leaderboard');
+
+    if (tabGlobal) {
+      tabGlobal.classList.toggle('active', this.leaderboardTab === 'global');
+      tabGlobal.setAttribute('aria-selected', this.leaderboardTab === 'global' ? 'true' : 'false');
+    }
+    if (tabLocal) {
+      tabLocal.classList.toggle('active', this.leaderboardTab === 'local');
+      tabLocal.setAttribute('aria-selected', this.leaderboardTab === 'local' ? 'true' : 'false');
+    }
+    if (clearBtn) {
+      clearBtn.hidden = this.leaderboardTab !== 'local';
+    }
+
+    this.loadLeaderboardView('main-leaderboard-list', 'leaderboard-status', this.leaderboardTab);
+  }
+
+  async loadLeaderboardView(containerId, statusId, mode = 'global') {
+    const statusEl = statusId ? document.getElementById(statusId) : null;
+    const isBadge = statusId === 'gameover-leaderboard-status';
+
+    if (mode === 'local') {
+      if (statusEl) statusEl.textContent = isBadge ? '📱 Local' : '📱 Pontuações salvas neste aparelho';
+      this.renderLeaderboard(containerId, this.leaderboard.getAll());
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = isBadge ? '⏳ Global…' : '⏳ Carregando ranking global…';
+
+    if (window.onlineLeaderboard && window.onlineLeaderboard.isAvailable()) {
+      try {
+        const scores = await window.onlineLeaderboard.fetchTopScores(40);
+        if (statusEl) statusEl.textContent = isBadge ? '🌎 Global' : '🌎 Placar universal — todos os jogadores';
+        this.renderLeaderboard(containerId, scores);
+        return;
+      } catch (_) {}
+    }
+
+    // Fallback automático offline para o placar local
+    if (statusEl) statusEl.textContent = isBadge ? '📱 Local (offline)' : '📡 Sem internet — mostrando placar local';
+    this.renderLeaderboard(containerId, this.leaderboard.getAll());
   }
 
   clearLeaderboard() {
-    if (confirm('Tem certeza que deseja zerar todas as pontuações do placar?')) {
+    if (confirm('Tem certeza que deseja zerar todas as pontuações salvas neste aparelho?')) {
       this.leaderboard.clear();
       this.highScore = 0;
       if (this.el.highscore) this.el.highscore.textContent = '0';
       const hs = document.getElementById('menu-highscore');
       if (hs) hs.textContent = '0';
-      this.renderLeaderboard('main-leaderboard-list');
-      this.renderLeaderboard('gameover-leaderboard-list');
+      this.renderLeaderboard('main-leaderboard-list', []);
+      this.renderLeaderboard('gameover-leaderboard-list', []);
     }
   }
 
-  renderLeaderboard(containerId) {
+  renderLeaderboard(containerId, customList = null) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    const list = this.leaderboard.getAll();
+    const list = Array.isArray(customList) ? customList : this.leaderboard.getAll();
     if (list.length === 0) {
       container.innerHTML = `
         <div class="leaderboard-empty">
@@ -1086,11 +1291,19 @@ class Game {
         rankClass = 'leader-third';
       }
 
+      // Resolve retrato dinamicamente pelo characterId (evita guardar base64 no localStorage)
+      const matchedChar = (item.characterId && window.characterManager)
+        ? window.characterManager.characters.find(c => c.id === item.characterId)
+        : null;
+      const avatarSrc = (matchedChar && matchedChar.portrait)
+        || (item.characterPortrait && !item.characterPortrait.startsWith('data:') ? item.characterPortrait : null)
+        || 'assets/portraits/portrait_luigi_3d.png';
+
       html += `
         <div class="leader-item ${rankClass}">
           <div class="leader-col-left">
             <span class="leader-rank">${rankBadge}</span>
-            <img class="leader-avatar" src="${escapeHtml(item.characterPortrait)}" alt="${escapeHtml(item.characterName)}" onerror="this.src='assets/sprites/luigi_3d_skate.png'">
+            <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.src='assets/sprites/luigi_3d_skate.png'">
             <div class="leader-info">
               <span class="leader-name">${escapeHtml(item.name)} ${index === 0 ? '<span title="Campeão">👑</span>' : ''}</span>
               <div class="leader-meta">

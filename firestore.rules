@@ -1,0 +1,127 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Este arquivo de regras de segurança assume a seguinte estrutura
+// para o Placar Universal público do jogo "Luigi Radical Skate":
+//
+// Collection: leaderboard
+// Document ID: {entryId} (auto-gerado pelo Firestore)
+// Acesso: Público sem autenticação obrigatória (jogo infantil/casual),
+//         com escrita somente de criação (imutável) e leitura limitada.
+// Fields (todos obrigatórios, nenhum campo extra permitido):
+//   - name: string (required, 1..24 chars) - Apelido do jogador
+//   - score: int (required, 1..9999999) - Pontuação final da partida
+//   - distance: int (required, 0..999999) - Distância percorrida
+//   - characterId: string (required, 1..40 chars) - ID do personagem
+//   - characterName: string (required, 1..30 chars) - Nome do personagem
+//   - sportId: string (required, enum: 'skate' | 'bmx' | 'scooter' | 'skates') - Modalidade
+//   - sportIcon: string (required, 1..8 chars) - Emoji/ícone do esporte
+//   - date: string (required, 4..20 chars) - Data formatada da partida
+//   - time: string (required, 4..12 chars) - Hora formatada da partida
+//   - createdAt: timestamp (required, == request.time) - Timestamp do servidor
+//
+// Observação sobre queries:
+//   - Consultas de listagem (`list`) exigem `limit(N)` com `1 <= N <= 100`
+//     (ex.: `orderBy('score', 'desc'), limit(50)`) para evitar scraping
+//     e proteger a cota de leituras.
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidIntRange(val, minVal, maxVal) {
+      return val is int && val >= minVal && val <= maxVal;
+    }
+
+    function isValidSportId(val) {
+      return val is string && val in ['skate', 'bmx', 'scooter', 'skates'];
+    }
+
+    function isServerTimestamp(val) {
+      return val is timestamp && val == request.time;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidLeaderboardEntry(data) {
+      let allowedFields = [
+        'name',
+        'score',
+        'distance',
+        'characterId',
+        'characterName',
+        'sportId',
+        'sportIcon',
+        'date',
+        'time',
+        'createdAt'
+      ];
+
+      return hasOnlyAllowedFields(allowedFields) &&
+             hasRequiredFields(allowedFields) &&
+             isValidString(data.name, 1, 24) &&
+             isValidIntRange(data.score, 1, 9999999) &&
+             isValidIntRange(data.distance, 0, 999999) &&
+             isValidString(data.characterId, 1, 40) &&
+             isValidString(data.characterName, 1, 30) &&
+             isValidSportId(data.sportId) &&
+             isValidString(data.sportIcon, 1, 8) &&
+             isValidString(data.date, 4, 20) &&
+             isValidString(data.time, 4, 12) &&
+             isServerTimestamp(data.createdAt);
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /leaderboard/{entryId} {
+      // Leitura individual permitida publicamente (sem PII no documento)
+      allow get: if true;
+
+      // Listagem pública com limite máximo de 100 documentos por consulta
+      // para proteção contra scraping e abuso de cota
+      allow list: if request.query.limit is int &&
+                     request.query.limit > 0 &&
+                     request.query.limit <= 100;
+
+      // Criação pública com validação estrita de schema, tipos, limites
+      // e timestamp do servidor (serverTimestamp())
+      allow create: if isValidLeaderboardEntry(request.resource.data);
+
+      // Placar 100% imutável: ninguém pode alterar ou apagar recordes
+      allow update, delete: if false;
+    }
+
+    // ===============================================================
+    // Default Deny (Catch-all)
+    // ===============================================================
+
+    // Bloqueia qualquer outra coleção ou subcoleção não declarada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

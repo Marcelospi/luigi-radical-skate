@@ -402,7 +402,7 @@
       <div class="leaderboard-container">
         <div class="leaderboard-header">
           <h3 class="leaderboard-title">🏆 Placar dos Melhores Skatistas</h3>
-          <span class="leaderboard-badge">Classificação Geral</span>
+          <span id="gameover-leaderboard-status" class="leaderboard-badge">🌎 Global</span>
         </div>
         <div id="gameover-leaderboard-list" class="leaderboard-list">
           <!-- preenchido via JS -->
@@ -422,6 +422,12 @@
         <p class="screen-sub">Os maiores skatistas e recordes de todos os tempos!</p>
       </div>
 
+      <div class="leaderboard-tabs" role="tablist" aria-label="Tipo de placar">
+        <button type="button" id="tab-lb-global" class="lb-tab active" role="tab" aria-selected="true">🌎 Global (Todos)</button>
+        <button type="button" id="tab-lb-local" class="lb-tab" role="tab" aria-selected="false">📱 Neste aparelho</button>
+      </div>
+      <p id="leaderboard-status" class="leaderboard-status">🌎 Placar universal — todos os jogadores</p>
+
       <div class="leaderboard-container leaderboard-container--fullscreen">
         <div id="main-leaderboard-list" class="leaderboard-list">
           <!-- preenchido via JS -->
@@ -430,7 +436,7 @@
 
       <div class="action-row">
         <button class="btn btn-quiet btn-back-menu">Voltar ao Menu</button>
-        <button id="btn-clear-leaderboard" class="btn btn-quiet btn-danger-soft">Zerar Placar</button>
+        <button id="btn-clear-leaderboard" class="btn btn-quiet btn-danger-soft" hidden>Zerar Placar Local</button>
       </div>
     </section>
 
@@ -448,6 +454,7 @@
   <script src="js/character_manager.js"></script>
   <script src="js/game_physics.js"></script>
   <script src="js/game_world.js"></script>
+  <script src="js/leaderboard_online.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

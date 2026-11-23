@@ -1417,6 +1417,41 @@ kbd {
   margin: 0;
 }
 
+/* ---- Abas e status do Placar Global / Local ---- */
+.leaderboard-tabs {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: var(--r-pill);
+  background: rgba(10, 12, 26, 0.72);
+  border: 1px solid var(--line);
+}
+.lb-tab {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.2s;
+}
+.lb-tab:hover { color: var(--text); }
+.lb-tab.active {
+  color: #04121b;
+  background: linear-gradient(120deg, var(--cyan), #60a5fa);
+  box-shadow: 0 4px 16px rgba(34, 211, 238, 0.32);
+}
+.leaderboard-status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-top: -6px;
+  text-align: center;
+}
+
 /* ---- Container do Placar de Líderes ---- */
 .leaderboard-container {
   width: 100%;
