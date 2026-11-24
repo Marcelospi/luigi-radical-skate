@@ -378,7 +378,7 @@ class GameWorld {
           pad.used = true;
           pad.anim = 18;
           if (pad.type === 'bounce') {
-            player.jump(-18.6, { keepCombo: false, fromRamp: true });
+            player.jump(-16.2, { keepCombo: false, fromRamp: true });
             const pts = player.addScore ? player.addScore(180) : 180;
             if (!player.addScore) player.score += pts;
             player.addFever?.(14);
@@ -839,7 +839,8 @@ class GameWorld {
       return 'flat';
     }
 
-    const hazard = Math.min(0.44, 0.16 + (d - 600) / 9000);
+    const isHard = player.difficulty === 'hard';
+    const hazard = Math.min(isHard ? 0.54 : 0.46, (isHard ? 0.24 : 0.18) + (d - 600) / 7500);
     const r = Math.random();
 
     if (r < hazard * 0.50) return 'breakable';
@@ -893,28 +894,34 @@ class GameWorld {
       return;
     }
     const r = Math.random();
+    const shieldCutoff = player.difficulty === 'hard' ? 0.31 : 0.38;
     if (r < 0.14) {
       this.collectibles.push({ type: 'magnet', x, y, size: 38, collected: false });
     } else if (r < 0.24) {
       this.collectibles.push({ type: 'double', x, y, size: 38, collected: false });
-    } else if (r < 0.38 && !player.hasShield) {
+    } else if (r < shieldCutoff && !player.hasShield) {
       this.collectibles.push({ type: 'shield', x, y, size: 38, collected: false });
     }
   }
 
-  // ---- Bloco plano com obstáculo + variação por bioma ----
+  // ---- Bloco plano com obstáculo + sequências ritmadas por fase/dificuldade ----
   chunkFlat(x, player) {
-    const baseWidth = 860 + Math.random() * 360;
+    const d = player.distance || 0;
+    const isHard = player.difficulty === 'hard';
+    const shrink = Math.min(180, d * 0.065) + (isHard ? 60 : 0);
+    const baseWidth = Math.max(660, 860 - shrink) + Math.random() * 280;
     const platform = this.makePlatform(x, baseWidth);
     this.platforms.push(platform);
 
-    const biomeId = this.getBiome(player.distance).id;
-    const obsX = x + 310 + Math.random() * 130;
+    const biomeId = this.getBiome(d).id;
+    const obsX = x + Math.max(210, 290 - shrink * 0.3) + Math.random() * 110;
     const roll = Math.random();
     let obsEndX = obsX + 60;
+    let firstKind = 'crate';
 
     if (biomeId === 'metropolis' && roll < 0.34) {
       // Drone neon flutuante na altura de salto ou agachamento
+      firstKind = 'drone';
       this.obstacles.push({
         type: 'drone',
         x: obsX,
@@ -932,6 +939,7 @@ class GameWorld {
       }
     } else if (biomeId === 'beach' && roll < 0.34) {
       // Barril rolante no píer da praia
+      firstKind = 'barrel';
       this.obstacles.push({
         type: 'barrel',
         x: obsX + 90,
@@ -948,6 +956,7 @@ class GameWorld {
         this.collectibles.push({ type: 'coin', x: obsX + 60, y: this.groundY - 128, size: 28, collected: false });
       }
     } else if (roll < 0.55) {
+      firstKind = 'crate';
       this.obstacles.push({
         type: 'crate',
         x: obsX, y: this.groundY - 58,
@@ -960,6 +969,7 @@ class GameWorld {
         this.collectibles.push({ type: 'coin', x: obsX + 27, y: this.groundY - 124, size: 28, collected: false });
       }
     } else {
+      firstKind = 'sign';
       this.obstacles.push({
         type: 'sign',
         x: obsX, y: this.groundY - 150,
@@ -973,6 +983,44 @@ class GameWorld {
           type: 'coin', x: obsX + 14 + i * 46, y: this.groundY - 44, size: 24, collected: false
         });
       }
+    }
+
+    // Sequência ritmada (2º obstáculo logo após o 1º): pula->agacha, agacha->pula ou dupla caixa!
+    const comboStartDist = isHard ? 80 : 220;
+    const comboChance = d >= comboStartDist
+      ? Math.min(isHard ? 0.85 : 0.72, (isHard ? 0.48 : 0.34) + (d - comboStartDist) / 3600)
+      : 0;
+    if (comboChance > 0 && Math.random() < comboChance) {
+      const gapBetween = (isHard ? 255 : 285) + Math.random() * 55;
+      const obs2X = obsEndX + gapBetween;
+      const wantSign = (firstKind === 'crate' || firstKind === 'barrel')
+        ? Math.random() < 0.65
+        : Math.random() < 0.30;
+
+      if (wantSign) {
+        this.obstacles.push({
+          type: 'sign',
+          x: obs2X, y: this.groundY - 150,
+          width: 78, height: 62,
+          damageReason: 'Bateu na placa',
+          hit: false
+        });
+        obsEndX = obs2X + 78;
+        this.collectibles.push({ type: 'coin', x: obs2X + 39, y: this.groundY - 44, size: 24, collected: false });
+      } else {
+        this.obstacles.push({
+          type: 'crate',
+          x: obs2X, y: this.groundY - 58,
+          width: 54, height: 58,
+          damageReason: 'Bateu na caixa',
+          hit: false
+        });
+        obsEndX = obs2X + 54;
+        if (Math.random() < 0.6) {
+          this.collectibles.push({ type: 'coin', x: obs2X + 27, y: this.groundY - 124, size: 26, collected: false });
+        }
+      }
+      platform.width = Math.max(platform.width, (obsEndX - x) + 280);
     }
 
     // Trampolim elástico ou Speed Pad com margem segura (>= 205px) após o obstáculo
@@ -1061,7 +1109,26 @@ class GameWorld {
       }
       this._maybeSpawnBonusPickup(epX + epW * 0.5, epY - 76, player);
     } else {
-      if (Math.random() < 0.35) {
+      const d = player.distance || 0;
+      const isHard = player.difficulty === 'hard';
+      const postThreshold = isHard ? 200 : 450;
+      if (d >= postThreshold && Math.random() < (isHard ? 0.55 : 0.42)) {
+        // Desafio pós-corrimão: exige atenção ao sair do grind!
+        const postX = railX + railWidth + 235;
+        if (Math.random() < 0.55) {
+          this.obstacles.push({
+            type: 'sign', x: postX, y: this.groundY - 150,
+            width: 78, height: 62, damageReason: 'Bateu na placa', hit: false
+          });
+          this._maybeSpawnBonusPickup(postX + 39, this.groundY - 44, player);
+        } else {
+          this.obstacles.push({
+            type: 'crate', x: postX, y: this.groundY - 58,
+            width: 54, height: 58, damageReason: 'Bateu na caixa', hit: false
+          });
+          this._maybeSpawnBonusPickup(postX + 27, this.groundY - 126, player);
+        }
+      } else if (Math.random() < 0.35) {
         const padX = railX + railWidth + 140;
         this.pads.push({ type: 'speed', x: padX, y: this.groundY, width: 92, height: 10, used: false, anim: 0 });
         this._maybeSpawnBonusPickup(padX + 125, this.groundY - 70, player);
@@ -1071,15 +1138,32 @@ class GameWorld {
     }
   }
 
-  // ---- Bloco com rampa de mega salto + combo de rota alta opcional ----
+  // ---- Bloco com rampa realista + abismo (Fase 2+) ou combo de rota alta ----
   chunkRamp(x, player) {
+    const d = player.distance || 0;
+    const isHard = player.difficulty === 'hard';
     const rampW = 176;
     const rampH = 66;
-    const baseWidth = 920 + Math.random() * 260;
-    const platform = this.makePlatform(x, baseWidth);
-    this.platforms.push(platform);
-
     const rampX = x + 280;
+    const lipX = rampX + rampW;
+
+    // Fase 2+ (600m+): parte das rampas saltam sobre um abismo real!
+    const useRampGap = d >= 600 && Math.random() < (isHard ? 0.55 : 0.40);
+    let platform;
+    if (useRampGap) {
+      const gap = this.jumpableGap(player.speed);
+      const runwayW = (lipX + 18) - x;
+      const landingX = lipX + 18 + gap;
+      const landingW = Math.max(TRACK.MIN_LANDING + 140, 440 + Math.random() * 180);
+      this.platforms.push(this.makePlatform(x, runwayW));
+      platform = this.makePlatform(landingX, landingW);
+      this.platforms.push(platform);
+    } else {
+      const baseWidth = 900 + Math.random() * 240;
+      platform = this.makePlatform(x, baseWidth);
+      this.platforms.push(platform);
+    }
+
     this.ramps.push({
       x: rampX,
       y: this.groundY - rampH,
@@ -1090,44 +1174,45 @@ class GameWorld {
       riderU: 0
     });
 
-    // Arco de moedas saindo exatamente do lip (topo) da rampa
-    const lipX = rampX + rampW;
-    this.spawnJumpArc(lipX + 24, this.groundY - 165, 4, 340, player.speed);
+    // Arco de moedas ajustado à parábola realista da rampa
+    this.spawnJumpArc(lipX + 24, this.groundY - 142, 4, 300, player.speed);
 
-    if (Math.random() < 0.45) {
+    if (Math.random() < 0.42) {
       this.collectibles.push({
-        type: 'turbo', x: lipX + 250, y: this.groundY - 315, size: 40, collected: false
+        type: 'turbo', x: lipX + 215, y: this.groundY - 238, size: 40, collected: false
       });
     } else {
-      this._maybeSpawnBonusPickup(lipX + 240, this.groundY - 280, player);
+      this._maybeSpawnBonusPickup(lipX + 210, this.groundY - 215, player);
     }
 
-    // Combo opcional após a rampa: aterrissar no Caminho Alto ou emendar num Corrimão
-    const followRoll = Math.random();
-    if (followRoll < 0.30) {
-      const epX = lipX + 360;
-      const epW = 240;
-      const epY = this.groundY - 140;
-      platform.width = Math.max(platform.width, (epX - x) + epW + 240);
-      this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
-      for (let i = 0; i < 3; i++) {
-        this.collectibles.push({
-          type: 'coin', x: epX + 42 + i * 76, y: epY - 34, size: 26, collected: false
+    // Combo opcional após a rampa (quando contínua): Caminho Alto ou Corrimão de aterrissagem
+    if (!useRampGap) {
+      const followRoll = Math.random();
+      if (followRoll < 0.30) {
+        const epX = lipX + 320;
+        const epW = 240;
+        const epY = this.groundY - 134;
+        platform.width = Math.max(platform.width, (epX - x) + epW + 240);
+        this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
+        for (let i = 0; i < 3; i++) {
+          this.collectibles.push({
+            type: 'coin', x: epX + 42 + i * 76, y: epY - 34, size: 26, collected: false
+          });
+        }
+      } else if (followRoll < 0.50) {
+        const railX = lipX + 340;
+        const railW = 225;
+        const railY = this.groundY - 68;
+        const surfaceType = this.getBiome(d).id === 'beach' ? 'wood' : 'metal';
+        platform.width = Math.max(platform.width, (railX - x) + railW + 240);
+        this.rails.push({
+          x: railX, y: railY, width: railW, height: 14, surfaceType, glowPhase: Math.random() * Math.PI * 2
         });
-      }
-    } else if (followRoll < 0.50) {
-      const railX = lipX + 380;
-      const railW = 225;
-      const railY = this.groundY - 68;
-      const surfaceType = this.getBiome(player.distance).id === 'beach' ? 'wood' : 'metal';
-      platform.width = Math.max(platform.width, (railX - x) + railW + 240);
-      this.rails.push({
-        x: railX, y: railY, width: railW, height: 14, surfaceType, glowPhase: Math.random() * Math.PI * 2
-      });
-      for (let i = 0; i < 3; i++) {
-        this.collectibles.push({
-          type: 'coin', x: railX + 34 + i * 78, y: railY - 36, size: 26, collected: false
-        });
+        for (let i = 0; i < 3; i++) {
+          this.collectibles.push({
+            type: 'coin', x: railX + 34 + i * 78, y: railY - 36, size: 26, collected: false
+          });
+        }
       }
     }
   }

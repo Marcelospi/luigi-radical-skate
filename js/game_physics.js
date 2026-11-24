@@ -7,15 +7,15 @@
 
 const PHYS = {
   GRAVITY:        0.62,   // aceleração base por passo
-  APEX_GRAVITY:   0.46,   // leve hang-time perto do ápice do salto
-  APEX_THRESHOLD: 2.6,    // faixa de |vy| considerada ápice
-  FALL_GRAVITY:   0.70,   // gravidade mais firme na descida (peso real)
+  APEX_GRAVITY:   0.54,   // leve hang-time perto do ápice (sem efeito balão)
+  APEX_THRESHOLD: 2.4,    // faixa de |vy| considerada ápice
+  FALL_GRAVITY:   0.76,   // gravidade firme na descida (peso real)
   FAST_FALL_ACC:  0.85,   // aceleração extra ao segurar Baixo/S no ar
   MAX_FALL:       20,     // velocidade terminal de queda
   MAX_FAST_FALL:  24,     // velocidade terminal em fast-fall
   JUMP_VELOCITY: -14.2,   // ollie
   GRIND_JUMP_VEL:-13.8,   // ollie saindo de um grind
-  RAMP_VELOCITY: -19.8,   // lançamento de rampa
+  RAMP_VELOCITY: -16.6,   // lançamento realista de rampa
   JUMP_CUT:      -7.2,    // velocidade mantida ao soltar a tecla cedo
   MIN_JUMP_STEPS: 6,      // passos de subida garantidos antes do corte
   COYOTE_STEPS:   7,      // passos de tolerância após sair da borda
@@ -725,11 +725,13 @@ class Player {
       this.isPushing = false;
       this.pushPhase = 0;
       const accelMult = (this.sport && this.sport.accelMult) || 1;
+      const diffAccel = this.difficulty === 'hard' ? 1.4 : 1.0;
+      const hardMax = this.maxSpeed + (this.difficulty === 'hard' ? 0.9 : 0);
       // Se estava acima da velocidade normal após soltar a seta, desacelera suavemente
-      if (this.speed > this.maxSpeed) {
-        this.speed = Math.max(this.maxSpeed, this.speed - 0.06);
+      if (this.speed > hardMax) {
+        this.speed = Math.max(hardMax, this.speed - 0.06);
       } else {
-        this.speed = Math.min(this.maxSpeed, this.speed + PHYS.ACCELERATION * accelMult);
+        this.speed = Math.min(hardMax, this.speed + PHYS.ACCELERATION * accelMult * diffAccel);
       }
     }
   }
@@ -975,9 +977,9 @@ class Player {
 
     const speedRatio = Math.max(0, Math.min(1.4, this.speed / this.maxSpeed));
     const rampMult = (this.sport && this.sport.rampBoostMult) || 1;
-    let launchVy = -(17.6 + speedRatio * 2.8) * rampMult;
+    let launchVy = -(15.2 + speedRatio * 1.9) * rampMult;
     if (boosted) {
-      launchVy -= 2.1 * rampMult;
+      launchVy -= 1.8 * rampMult;
       this.addScore(250);
       this.lipBoostCount++;
       this.addFever(18);
@@ -1524,13 +1526,15 @@ class Player {
           );
         }
       } else if (incompleteTrick) {
-        // Sem punição de vida (amigável para crianças), apenas perda leve de embalo
+        // Pousou no meio do giro: no Fácil perde embalo/combo; no Difícil leva tombo (-1 vida)!
         const minSpd = this.baseSpeed || PHYS.BASE_SPEED;
-        this.speed = Math.max(minSpd, this.speed - 0.5);
+        this.speed = Math.max(minSpd, this.speed - 1.2);
         this.comboLinkTimer = 0;
         this.linkedComboMult = 1;
         this.emitEvent('land', { intensity: impactNorm, surfaceType: this.surfaceType, y: top });
-        if (window.particleSystem && window.particleSystem.addFloatingText) {
+        if (this.difficulty === 'hard' && this.gameMode === 'classic') {
+          this.takeDamage('Caiu na manobra!', false);
+        } else if (window.particleSystem && window.particleSystem.addFloatingText) {
           window.particleSystem.addFloatingText(
             'POUSO TORTO!', this.x + this.width * 0.5, this.y - 54, '#fbbf24', 20
           );
@@ -1696,7 +1700,7 @@ class Player {
     if (!noLifeLoss) {
       this.lives -= instantDeath ? this.lives : 1;
     }
-    this.invincibleTimer = 100;
+    this.invincibleTimer = this.difficulty === 'hard' ? 58 : 78;
     this.deathReason = reason;
     this.comboMultiplier = 1;
     this.comboPoints = 0;

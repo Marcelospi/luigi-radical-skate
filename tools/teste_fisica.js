@@ -725,10 +725,10 @@ console.log('\n=== 22. Rampa realista: sobe a curva, inclina e decola no lip ===
     normal.minPitch < -0.25,
     `minPitch=${normal.minPitch.toFixed(2)}rad`);
   check('decola automaticamente ao chegar no lip',
-    normal.decolouNoLip && normal.launchVy < -17,
+    normal.decolouNoLip && normal.launchVy < -15.5 && normal.launchVy > -18.5,
     `vy=${normal.launchVy.toFixed(2)}`);
   check('apertar Pulo no lip ativa Lip Boost com lancamento mais alto',
-    boosted.decolouNoLip && boosted.eventoBoosted && boosted.launchVy < normal.launchVy - 1.5,
+    boosted.decolouNoLip && boosted.eventoBoosted && boosted.launchVy < normal.launchVy - 1.2,
     `normal=${normal.launchVy.toFixed(2)} vs boost=${boosted.launchVy.toFixed(2)}`);
 }
 
@@ -1258,11 +1258,32 @@ console.log('\n=== 31. Dificuldade Facil vs Dificil (abismo vs obstaculos) ===')
   step(easyRun.world, easyRun.player, {});
   const resgatouNoFacil = easyRun.player.isGameOver === false && easyRun.player.lives === VIDAS_INICIAIS - 1;
 
+  // Tombo em manobra incompleta: tira 1 vida no Dificil, nao tira vida no Facil
+  const hardTrickRun = newRun();
+  hardTrickRun.player.reset(hardTrickRun.world, { gameMode: 'classic', difficulty: 'hard' });
+  hardTrickRun.player.onGround = false;
+  hardTrickRun.player.trickState = { name: 'KICKFLIP', style: 'flip' };
+  hardTrickRun.player.trickProgress = 0.4;
+  hardTrickRun.player.vy = 10;
+  hardTrickRun.player.land(hardTrickRun.world.platforms[0], hardTrickRun.world.groundY, hardTrickRun.world);
+  const tomboNoDificil = hardTrickRun.player.lives === VIDAS_INICIAIS - 1;
+
+  const easyTrickRun = newRun();
+  easyTrickRun.player.reset(easyTrickRun.world, { gameMode: 'classic', difficulty: 'easy' });
+  easyTrickRun.player.onGround = false;
+  easyTrickRun.player.trickState = { name: 'KICKFLIP', style: 'flip' };
+  easyTrickRun.player.trickProgress = 0.4;
+  easyTrickRun.player.vy = 10;
+  easyTrickRun.player.land(easyTrickRun.world.platforms[0], easyTrickRun.world.groundY, easyTrickRun.world);
+  const semTomboNoFacil = easyTrickRun.player.lives === VIDAS_INICIAIS;
+
   check('Dificil: bater em obstaculo tira apenas 1 vida', perdeuUmaNoObstaculo, `vidas=${player.lives}`);
   check('Dificil: cair no buraco perde todas as vidas e encerra partida', morreuNoAbismoDificil,
     `isGameOver=${player.isGameOver} vidas=${player.lives}`);
   check('Facil: cair no buraco perde 1 vida e faz resgate', resgatouNoFacil,
     `isGameOver=${easyRun.player.isGameOver} vidas=${easyRun.player.lives}`);
+  check('Dificil: pousar manobra incompleta da tombo (-1 vida)', tomboNoDificil, `vidas=${hardTrickRun.player.lives}`);
+  check('Facil: pousar manobra incompleta nao tira vida', semTomboNoFacil, `vidas=${easyTrickRun.player.lives}`);
 }
 
 console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
