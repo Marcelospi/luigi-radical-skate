@@ -320,6 +320,15 @@ class Game {
     this._lbReqSeq = {};
     this._runId = 0;
     this._prevLivesCount = null;
+    this._finishSeq = null;
+    this._resumeSeq = null;
+    this._countAnimRaf = null;
+    this._settingsReturnState = 'MENU';
+    this._audioUnlocked = false;
+    this._gamepadPrev = {};
+    this._gamepadToastShown = false;
+    this._confirmResolver = null;
+    this.vibrationEnabled = readText('luigi_skate_vibration_v1', 'true') !== 'false';
 
     this.el = {
       score:             document.getElementById('hud-score'),
@@ -359,7 +368,16 @@ class Game {
       registerBox:       document.getElementById('gameover-register-box'),
       playerNameInput:   document.getElementById('leaderboard-name-input'),
       btnSaveScore:      document.getElementById('btn-save-score'),
-      registerFeedback:  document.getElementById('register-feedback')
+      registerFeedback:  document.getElementById('register-feedback'),
+      finishFreeBtn:     document.getElementById('btn-finish-free'),
+      pauseFinishFreeBtn:document.getElementById('btn-pause-finish-free'),
+      resumeCountdown:   document.getElementById('resume-countdown'),
+      resumeCountdownNum:document.getElementById('resume-countdown-num'),
+      gameoverTitle:     document.getElementById('gameover-title'),
+      gameoverRankBadge: document.getElementById('gameover-rank-badge'),
+      fullscreenHudBtn:  document.getElementById('btn-fullscreen-hud'),
+      fullscreenMenuBtn: document.getElementById('btn-fullscreen-menu'),
+      fullscreenSettingsBtn: document.getElementById('btn-settings-fullscreen')
     };
 
     this.resize();
@@ -379,8 +397,79 @@ class Game {
     this.setState('MENU');
     this.refreshMenuInfo();
     this.el.highscore.textContent = formatNumber(this.highScore);
+    this.registerServiceWorker();
+    this.initGamepadListeners();
+    this.syncFullscreenButtons();
 
     requestAnimationFrame(this.animate);
+  }
+
+  registerServiceWorker() {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const okProto = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if (!okProto) return;
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  unlockAudioAndMenuMusic() {
+    if (!window.soundSystem) return;
+    window.soundSystem.init();
+    this._audioUnlocked = true;
+    if (['MENU', 'SHOP', 'MISSIONS', 'SELECT_CHAR', 'LEADERBOARD', 'HOW_TO_PLAY', 'SETTINGS'].includes(this.state)) {
+      if (typeof window.soundSystem.startMenuMusic === 'function') {
+        window.soundSystem.startMenuMusic();
+      }
+    }
+  }
+
+  haptic(pattern) {
+    if (!this.vibrationEnabled || this.camera?.reducedMotion) return;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try { navigator.vibrate(pattern); } catch (_) {}
+    }
+  }
+
+  isFullscreenSupported() {
+    const docEl = document.documentElement;
+    return !!(document.fullscreenEnabled || document.webkitFullscreenEnabled || (docEl && (docEl.requestFullscreen || docEl.webkitRequestFullscreen)));
+  }
+
+  isFullscreenActive() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+
+  toggleFullscreen() {
+    if (!this.isFullscreenSupported()) return;
+    const docEl = document.documentElement;
+    try {
+      if (this.isFullscreenActive()) {
+        if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } else {
+        if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
+        else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+      }
+    } catch (_) {}
+  }
+
+  syncFullscreenButtons() {
+    const supported = this.isFullscreenSupported();
+    const active = this.isFullscreenActive();
+    [this.el.fullscreenHudBtn, this.el.fullscreenMenuBtn, this.el.fullscreenSettingsBtn].forEach(btn => {
+      if (!btn) return;
+      btn.hidden = !supported;
+    });
+    if (this.el.fullscreenHudBtn) {
+      this.el.fullscreenHudBtn.textContent = active ? '🗗' : '⛶';
+      this.el.fullscreenHudBtn.title = active ? 'Sair da tela cheia (F)' : 'Tela cheia (F)';
+    }
+    if (this.el.fullscreenMenuBtn) {
+      this.el.fullscreenMenuBtn.textContent = active ? '🗗' : '⛶';
+      this.el.fullscreenMenuBtn.title = active ? 'Sair da tela cheia (F)' : 'Tela cheia (F)';
+    }
+    if (this.el.fullscreenSettingsBtn) {
+      this.el.fullscreenSettingsBtn.textContent = active ? '🗗 Sair da Tela Cheia (F)' : '⛶ Ativar Tela Cheia (F)';
+    }
   }
 
   /**
@@ -457,18 +546,38 @@ class Game {
       if (this.state === 'PLAYING') {
         this.input.down(e.code);
       }
-      window.soundSystem.init();
+      this.unlockAudioAndMenuMusic();
+
+      // Modal de confirmação aberto captura Escape / Enter
+      if (this._confirmResolver) {
+        if (e.code === 'Escape') {
+          e.preventDefault();
+          this._resolveConfirm(false);
+        }
+        return;
+      }
 
       if (e.code === 'KeyP') {
-        if (this.state === 'PLAYING') this.pauseGame();
+        if (this.state === 'PLAYING' || this.state === 'RESUMING') this.pauseGame();
         else if (this.state === 'PAUSED') this.resumeGame();
       }
 
+      if (e.code === 'KeyF') {
+        e.preventDefault();
+        this.toggleFullscreen();
+      }
+
       if (e.code === 'Escape') {
-        if (this.state === 'PLAYING') {
+        if (this.state === 'PLAYING' || this.state === 'RESUMING') {
           this.pauseGame();
         } else if (this.state === 'PAUSED') {
           this.resumeGame();
+        } else if (this.state === 'FINISHING') {
+          this._finishSeq = null;
+          this.gameOver();
+        } else if (this.state === 'SETTINGS') {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeSettings();
         } else if (this.state === 'CREATOR' && this.isCreatorCameraOpen && this.isCreatorCameraOpen()) {
           if (this.stopCreatorCamera) this.stopCreatorCamera();
         } else if (['SHOP', 'MISSIONS', 'SELECT_CHAR', 'CREATOR', 'LEADERBOARD', 'HOW_TO_PLAY'].includes(this.state)) {
@@ -508,13 +617,16 @@ class Game {
 
     window.addEventListener('keyup', (e) => { this.input.up(e.code); });
 
+    document.addEventListener('fullscreenchange', () => this.syncFullscreenButtons());
+    document.addEventListener('webkitfullscreenchange', () => this.syncFullscreenButtons());
+
     // Perder o foco não pode virar morte na volta
     window.addEventListener('blur', () => {
       this.input.clear();
-      if (this.state === 'PLAYING') this.pauseGame();
+      if (this.state === 'PLAYING' || this.state === 'RESUMING') this.pauseGame();
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && this.state === 'PLAYING') this.pauseGame();
+      if (document.hidden && (this.state === 'PLAYING' || this.state === 'RESUMING')) this.pauseGame();
     });
 
     this.bindTouch('touch-accelerate', 'TouchAccelerate');
@@ -605,7 +717,7 @@ class Game {
     const on = (id, fn, soundKind = 'click', { blur = false } = {}) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', () => {
-        window.soundSystem.init();
+        this.unlockAudioAndMenuMusic();
         if (soundKind && window.soundSystem.playUI) window.soundSystem.playUI(soundKind);
         if (blur && el.blur) el.blur();
         fn();
@@ -621,6 +733,14 @@ class Game {
     on('btn-gameover-shop', () => { this.flushOnlineScoreIfNeeded(); this.showShop(); });
     on('btn-leaderboard', () => this.showLeaderboard());
     on('btn-how-to-play', () => this.setState('HOW_TO_PLAY'));
+    on('btn-settings-menu', () => this.openSettings('MENU'), 'click', { blur: true });
+    on('btn-fullscreen-menu', () => this.toggleFullscreen(), 'click', { blur: true });
+    on('btn-fullscreen-hud', () => this.toggleFullscreen(), 'click', { blur: true });
+    on('btn-finish-free', () => this.finishFreeRun(), 'click', { blur: true });
+    on('btn-pause-finish-free', () => this.finishFreeRun(), 'click', { blur: true });
+    on('btn-pause-settings', () => this.openSettings('PAUSED'));
+    on('btn-settings-fullscreen', () => this.toggleFullscreen());
+    on('btn-settings-back', () => this.closeSettings(), 'back');
     on('btn-clear-leaderboard', () => this.clearLeaderboard(), 'back');
     on('btn-select-and-play', () => this.startPlay());
     on('btn-pause-hud', () => this.pauseGame(), 'click', { blur: true });
@@ -632,6 +752,9 @@ class Game {
     on('btn-mute-hud', () => this.toggleMute(), null, { blur: true });
     on('tab-lb-global', () => this.switchLeaderboardTab('global'));
     on('tab-lb-local', () => this.switchLeaderboardTab('local'));
+
+    this.initSettingsControls();
+    this.initConfirmModal();
 
     // Abas da Oficina & Loja
     document.querySelectorAll('[data-shop-tab]').forEach(btn => {
@@ -836,6 +959,189 @@ class Game {
     if (btn) btn.textContent = window.soundSystem.muted ? '🔇' : '🔊';
   }
 
+  initSettingsControls() {
+    const musicSlider = document.getElementById('opt-music-vol');
+    const sfxSlider = document.getElementById('opt-sfx-vol');
+    const musicVal = document.getElementById('opt-music-val');
+    const sfxVal = document.getElementById('opt-sfx-val');
+    const vibCheck = document.getElementById('opt-vibration');
+
+    const syncUI = () => {
+      const mPct = Math.round(((window.soundSystem && window.soundSystem.getMusicVolume) ? window.soundSystem.getMusicVolume() : 0.7) * 100);
+      const sPct = Math.round(((window.soundSystem && window.soundSystem.getSfxVolume) ? window.soundSystem.getSfxVolume() : 0.9) * 100);
+      if (musicSlider) musicSlider.value = String(mPct);
+      if (musicVal) musicVal.textContent = mPct + '%';
+      if (sfxSlider) sfxSlider.value = String(sPct);
+      if (sfxVal) sfxVal.textContent = sPct + '%';
+      if (vibCheck) vibCheck.checked = this.vibrationEnabled;
+      this.syncFullscreenButtons();
+    };
+    this._syncSettingsUI = syncUI;
+
+    if (musicSlider) {
+      musicSlider.addEventListener('input', () => {
+        this.unlockAudioAndMenuMusic();
+        const pct = Math.max(0, Math.min(100, parseInt(musicSlider.value, 10) || 0));
+        if (musicVal) musicVal.textContent = pct + '%';
+        if (window.soundSystem && window.soundSystem.setMusicVolume) {
+          window.soundSystem.setMusicVolume(pct / 100);
+        }
+      });
+    }
+    if (sfxSlider) {
+      sfxSlider.addEventListener('input', () => {
+        window.soundSystem.init();
+        const pct = Math.max(0, Math.min(100, parseInt(sfxSlider.value, 10) || 0));
+        if (sfxVal) sfxVal.textContent = pct + '%';
+        if (window.soundSystem && window.soundSystem.setSfxVolume) {
+          window.soundSystem.setSfxVolume(pct / 100);
+        }
+      });
+      sfxSlider.addEventListener('change', () => {
+        window.soundSystem?.playUI?.('click');
+      });
+    }
+    if (vibCheck) {
+      vibCheck.addEventListener('change', () => {
+        this.vibrationEnabled = !!vibCheck.checked;
+        try { localStorage.setItem('luigi_skate_vibration_v1', String(this.vibrationEnabled)); } catch (_) {}
+        if (this.vibrationEnabled) this.haptic(25);
+      });
+    }
+    syncUI();
+  }
+
+  openSettings(returnState = 'MENU') {
+    this._settingsReturnState = returnState === 'PAUSED' ? 'PAUSED' : 'MENU';
+    if (this._syncSettingsUI) this._syncSettingsUI();
+    this.setState('SETTINGS');
+  }
+
+  closeSettings() {
+    const dest = this._settingsReturnState === 'PAUSED' ? 'PAUSED' : 'MENU';
+    this.setState(dest);
+  }
+
+  initConfirmModal() {
+    const modal = document.getElementById('confirm-modal');
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+    if (!modal || !okBtn || !cancelBtn) return;
+
+    okBtn.addEventListener('click', () => {
+      window.soundSystem?.playUI?.('click');
+      this._resolveConfirm(true);
+    });
+    cancelBtn.addEventListener('click', () => {
+      window.soundSystem?.playUI?.('back');
+      this._resolveConfirm(false);
+    });
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        window.soundSystem?.playUI?.('back');
+        this._resolveConfirm(false);
+      }
+    });
+  }
+
+  _resolveConfirm(result) {
+    const modal = document.getElementById('confirm-modal');
+    if (modal) modal.hidden = true;
+    const resolver = this._confirmResolver;
+    this._confirmResolver = null;
+    if (typeof resolver === 'function') resolver(!!result);
+  }
+
+  confirmDialog({ icon = '⚠️', title = 'Confirmar', message = '', confirmText = 'Confirmar', cancelText = 'Cancelar', danger = false } = {}) {
+    const modal = document.getElementById('confirm-modal');
+    const iconEl = document.getElementById('confirm-icon');
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const okBtn = document.getElementById('confirm-ok');
+    const cancelBtn = document.getElementById('confirm-cancel');
+
+    if (!modal || !okBtn || !cancelBtn) {
+      return Promise.resolve(typeof window.confirm === 'function' ? window.confirm(message || title) : false);
+    }
+
+    if (this._confirmResolver) this._resolveConfirm(false);
+    if (iconEl) iconEl.textContent = icon;
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
+    okBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText;
+    okBtn.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-primary');
+    modal.hidden = false;
+    setTimeout(() => cancelBtn.focus(), 0);
+
+    return new Promise((resolve) => {
+      this._confirmResolver = resolve;
+    });
+  }
+
+  initGamepadListeners() {
+    if (typeof window === 'undefined' || !navigator.getGamepads) return;
+    window.addEventListener('gamepadconnected', () => {
+      if (!this._gamepadToastShown) {
+        this._gamepadToastShown = true;
+        this.showToast({
+          icon: '🎮',
+          title: 'Controle conectado!',
+          subtitle: 'A: Pular · X/Y/B: Manobras · Start: Jogar',
+          info: true
+        });
+      }
+    });
+  }
+
+  pollGamepad() {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    let pads;
+    try { pads = navigator.getGamepads(); } catch (_) { return; }
+    if (!pads) return;
+    let gp = null;
+    for (let i = 0; i < pads.length; i++) {
+      if (pads[i] && pads[i].connected) { gp = pads[i]; break; }
+    }
+    if (!gp) return;
+
+    const btn = (idx) => !!(gp.buttons && gp.buttons[idx] && gp.buttons[idx].pressed);
+    const ax0 = (gp.axes && gp.axes[0]) || 0;
+    const ax1 = (gp.axes && gp.axes[1]) || 0;
+
+    const nowState = {
+      Space:      btn(0) || btn(12),          // A / Cross / D-Pad Up
+      ArrowDown:  btn(13) || ax1 > 0.55,      // D-Pad Down / Analógico baixo
+      ArrowRight: btn(15) || ax0 > 0.45,      // D-Pad Right / Analógico dir
+      ArrowLeft:  btn(14) || ax0 < -0.45,     // D-Pad Left / Analógico esq
+      KeyZ:       btn(2) || btn(4),           // X / Square / LB
+      KeyX:       btn(3) || btn(5),           // Y / Triangle / RB
+      KeyC:       btn(1) || btn(6) || btn(7), // B / Circle / LT / RT
+      Start:      btn(9)                      // Start / Options
+    };
+
+    const prev = this._gamepadPrev;
+
+    if (nowState.Start && !prev.Start) {
+      this.unlockAudioAndMenuMusic();
+      if (this.state === 'PLAYING' || this.state === 'RESUMING') this.pauseGame();
+      else if (this.state === 'PAUSED') this.resumeGame();
+      else if (this.state === 'MENU' || this.state === 'GAME_OVER' || this.state === 'SELECT_CHAR') this.startPlay();
+    }
+
+    const mappedKeys = ['Space', 'ArrowDown', 'ArrowRight', 'ArrowLeft', 'KeyZ', 'KeyX', 'KeyC'];
+    for (const k of mappedKeys) {
+      if (nowState[k] && !prev[k]) {
+        this.unlockAudioAndMenuMusic();
+        if (this.state === 'PLAYING') this.input.down(k);
+      } else if (!nowState[k] && prev[k]) {
+        this.input.up(k);
+      }
+    }
+
+    this._gamepadPrev = nowState;
+  }
+
   setState(state) {
     const prevState = this.state;
 
@@ -845,13 +1151,20 @@ class Game {
     }
 
     // Ao sair da partida (via Pausa ou diretamente) para o Menu, salva moedas coletadas (ex.: Treino Livre)
-    if ((prevState === 'PLAYING' || prevState === 'PAUSED') && state === 'MENU') {
+    if ((prevState === 'PLAYING' || prevState === 'PAUSED' || prevState === 'RESUMING' || prevState === 'FINISHING') && state === 'MENU') {
       this.bankCoinsIfNeeded(true);
       this.clearGameplayTimersAndOverlays({ clearToasts: false });
     }
 
+    if (state !== 'RESUMING') this.cancelResumeCountdown();
+    if (state !== 'FINISHING') this._finishSeq = null;
+    if (state !== 'GAME_OVER' && this._countAnimRaf) {
+      cancelAnimationFrame(this._countAnimRaf);
+      this._countAnimRaf = null;
+    }
+
     this.state = state;
-    this.wrapper.dataset.state = state;
+    this.wrapper.dataset.state = (state === 'RESUMING' || state === 'FINISHING') ? 'PLAYING' : state;
 
     const screens = {
       LOADING:      'screen-loading',
@@ -862,9 +1175,12 @@ class Game {
       CREATOR:      'screen-character-creator',
       LEADERBOARD:  'screen-leaderboard',
       HOW_TO_PLAY:  'screen-how-to-play',
+      SETTINGS:     'screen-settings',
       PAUSED:       'screen-pause',
       GAME_OVER:    'screen-game-over',
-      PLAYING:      null
+      PLAYING:      null,
+      RESUMING:     null,
+      FINISHING:    null
     };
 
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
@@ -883,11 +1199,15 @@ class Game {
 
     if (state === 'MENU') {
       if (window.soundSystem) {
-        if (window.soundSystem.stopMusic) window.soundSystem.stopMusic();
         if (window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
+        if (this._audioUnlocked && typeof window.soundSystem.startMenuMusic === 'function') {
+          window.soundSystem.startMenuMusic();
+        } else if (window.soundSystem.stopMusic) {
+          window.soundSystem.stopMusic();
+        }
       }
       // Recompõe a cena de fundo limpa ao voltar de uma partida pausada ou encerrada
-      if (prevState === 'PAUSED' || prevState === 'GAME_OVER' || prevState === 'PLAYING') {
+      if (prevState === 'PAUSED' || prevState === 'GAME_OVER' || prevState === 'PLAYING' || prevState === 'RESUMING' || prevState === 'FINISHING') {
         this.world.reset();
         if (this.player.setSport) this.player.setSport(this.selectedSport);
         this.player.reset(this.world);
@@ -1168,9 +1488,9 @@ class Game {
         <div class="char-badge">${escapeHtml(badgeText)}</div>
         <div class="char-desc">${escapeHtml(char.description || '')}</div>
         <div class="char-stats">
-          <div class="char-stat"><span>Velocidade</span><b>${escapeHtml(stats.velocidade || 'Alta')}</b></div>
-          <div class="char-stat"><span>Salto</span><b>${escapeHtml(stats.salto || 'Alto')}</b></div>
-          <div class="char-stat"><span>Manobras</span><b>${escapeHtml(stats.manobras || 'Épicas')}</b></div>
+          <div class="char-stat"><span>Visual</span><b>${escapeHtml(stats.visual || stats.velocidade || 'Rig 3D')}</b></div>
+          <div class="char-stat"><span>Combina</span><b>${escapeHtml(stats.favorito || stats.salto || '🛹 Skate')}</b></div>
+          <div class="char-stat"><span>Estilo</span><b>${escapeHtml(stats.estilo || stats.manobras || 'Radical')}</b></div>
         </div>
       `;
 
@@ -1186,9 +1506,17 @@ class Game {
 
       const del = card.querySelector('.char-delete');
       if (del) {
-        del.addEventListener('click', (e) => {
+        del.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (confirm(`Remover "${char.name}" da lista de personagens?`)) {
+          const ok = await this.confirmDialog({
+            icon: '🗑️',
+            title: 'Remover personagem?',
+            message: `Tem certeza que deseja apagar "${char.name}" da sua lista?`,
+            confirmText: 'Remover',
+            cancelText: 'Manter',
+            danger: true
+          });
+          if (ok) {
             window.characterManager.deleteCustomCharacter(char.id);
             this.renderCharacterCards();
           }
@@ -1786,17 +2114,24 @@ class Game {
     this._onlineSavedThisRun = false;
     this._coinsBankedThisRun = false;
 
+    this._finishSeq = null;
+    this.cancelResumeCountdown();
+
     if (this.el.avatar && window.characterManager) {
       const ch = window.characterManager.getSelected();
       this.el.avatar.src = (ch && ch.portrait) || 'assets/portraits/portrait_luigi_3d.png';
     }
+
+    const isFree = this.player.gameMode === 'free';
+    if (this.el.finishFreeBtn) this.el.finishFreeBtn.hidden = !isFree;
+    if (this.el.pauseFinishFreeBtn) this.el.pauseFinishFreeBtn.hidden = !isFree;
 
     this.setState('PLAYING');
     this.updateHUD();
     if (window.soundSystem.setMusicContext) {
       window.soundSystem.setMusicContext(this.player.currentStageIndex, false);
     }
-    window.soundSystem.startMusic();
+    window.soundSystem.startMusic('game');
 
     if (this.el.runHint) this.el.runHint.classList.add('visible');
     this._hintTimer = setTimeout(() => {
@@ -1805,8 +2140,17 @@ class Game {
     }, 3400);
   }
 
+  cancelResumeCountdown() {
+    if (this._resumeSeq && this._resumeSeq.timer) {
+      clearTimeout(this._resumeSeq.timer);
+    }
+    this._resumeSeq = null;
+    if (this.el.resumeCountdown) this.el.resumeCountdown.hidden = true;
+  }
+
   pauseGame() {
-    if (this.state !== 'PLAYING') return;
+    if (this.state !== 'PLAYING' && this.state !== 'RESUMING') return;
+    this.cancelResumeCountdown();
     this.input.clear();
     this.clearSwipeTimers();
     document.querySelectorAll('.touch-btn.is-pressed, .desk-trick-btn.is-pressed').forEach(btn => {
@@ -1821,13 +2165,96 @@ class Game {
   resumeGame() {
     if (this.state !== 'PAUSED') return;
     this.blurActiveElement();
-    this.setState('PLAYING');
-    this.lastTime = performance.now();
-    this.accumulator = 0;
-    window.soundSystem.startMusic();
+    const p = this.player;
+    const needsCountdown = !this.camera.reducedMotion && p && ((p.sessionDistance || 0) > 3 || !p.onGround);
+
+    if (!needsCountdown) {
+      this.setState('PLAYING');
+      this.lastTime = performance.now();
+      this.accumulator = 0;
+      window.soundSystem.startMusic('game');
+      return;
+    }
+
+    this.cancelResumeCountdown();
+    this.setState('RESUMING');
+    let count = 3;
+    const box = this.el.resumeCountdown;
+    const numEl = this.el.resumeCountdownNum;
+
+    const showStep = () => {
+      if (this.state !== 'RESUMING') return;
+      if (count <= 0) {
+        this.cancelResumeCountdown();
+        if (window.soundSystem.playCountdownTick) window.soundSystem.playCountdownTick(0);
+        this.setState('PLAYING');
+        this.lastTime = performance.now();
+        this.accumulator = 0;
+        window.soundSystem.startMusic('game');
+        return;
+      }
+      if (box && numEl) {
+        box.hidden = false;
+        numEl.textContent = String(count);
+        numEl.style.animation = 'none';
+        void numEl.offsetWidth;
+        numEl.style.animation = '';
+      }
+      if (window.soundSystem.playCountdownTick) window.soundSystem.playCountdownTick(count);
+      count--;
+      this._resumeSeq = { timer: setTimeout(showStep, 360) };
+    };
+    showStep();
+  }
+
+  finishFreeRun() {
+    if (!this.player || this.player.gameMode !== 'free') return;
+    if (this.state !== 'PLAYING' && this.state !== 'PAUSED' && this.state !== 'RESUMING') return;
+    this.cancelResumeCountdown();
+    this.player.endedFreeMode = true;
+    this.player.deathReason = 'Sessão de treino concluída!';
+    window.soundSystem?.playStageClear?.();
+    this.gameOver();
+  }
+
+  animateGameOverCounters(targetScore, targetDist, targetCoins) {
+    if (this._countAnimRaf) {
+      cancelAnimationFrame(this._countAnimRaf);
+      this._countAnimRaf = null;
+    }
+    const scoreEl = document.getElementById('final-score');
+    const distEl = document.getElementById('final-distance');
+    const coinsEl = document.getElementById('final-coins');
+    if (this.camera.reducedMotion) {
+      if (scoreEl) scoreEl.textContent = formatNumber(targetScore);
+      if (distEl) distEl.textContent = Math.floor(targetDist) + 'm';
+      if (coinsEl) coinsEl.textContent = formatNumber(targetCoins);
+      return;
+    }
+    const start = performance.now();
+    const duration = 560;
+    const tick = (now) => {
+      if (this.state !== 'GAME_OVER') {
+        this._countAnimRaf = null;
+        return;
+      }
+      const raw = Math.min(1, (now - start) / duration);
+      const ease = 1 - Math.pow(1 - raw, 3);
+      if (scoreEl) scoreEl.textContent = formatNumber(Math.round(targetScore * ease));
+      if (distEl) distEl.textContent = Math.floor(targetDist * ease) + 'm';
+      if (coinsEl) coinsEl.textContent = formatNumber(Math.round(targetCoins * ease));
+      if (raw < 1) {
+        this._countAnimRaf = requestAnimationFrame(tick);
+      } else {
+        this._countAnimRaf = null;
+      }
+    };
+    this._countAnimRaf = requestAnimationFrame(tick);
   }
 
   gameOver() {
+    this._finishSeq = null;
+    this.cancelResumeCountdown();
     this.clearGameplayTimersAndOverlays({ clearToasts: false });
     this.setState('GAME_OVER');
     window.soundSystem.stopMusic();
@@ -1836,16 +2263,33 @@ class Game {
     delete this.wrapper.dataset.fever;
 
     const p = this.player;
+    const isFree = p.gameMode === 'free' || p.endedFreeMode;
+    const isCleanTimeUp = p.gameMode === 'time60' && (p.timeLeftSteps || 0) <= 0;
+    const runDist = Math.max(0, Math.floor(p.sessionDistance !== undefined ? p.sessionDistance : (p.distance || 0)));
     const prevTopScore = this.leaderboard.getTopScore();
+
+    if (this.el.gameoverTitle) {
+      if (isFree) {
+        this.el.gameoverTitle.textContent = '🌟 Treino Concluído';
+        this.el.gameoverTitle.className = 'screen-title screen-title--good';
+      } else if (isCleanTimeUp) {
+        this.el.gameoverTitle.textContent = '⏱️ Tempo Esgotado!';
+        this.el.gameoverTitle.className = 'screen-title screen-title--good';
+      } else {
+        this.el.gameoverTitle.textContent = 'Fim da linha';
+        this.el.gameoverTitle.className = 'screen-title screen-title--danger';
+      }
+    }
 
     // Deposita moedas coletadas na Carteira Permanente (1 única vez por corrida)
     let bankInfo = { raw: p.coins, bonus: 0, total: p.coins };
     if (!this._coinsBankedThisRun && window.progressionManager) {
       bankInfo = this.bankCoinsIfNeeded(false);
       const endNotes = window.progressionManager.recordRunEvent('run_end', 1, {
-        distance: p.distance,
+        distance: runDist,
         bestCombo: p.bestCombo,
-        stageIndex: p.currentStageIndex
+        stageIndex: p.currentStageIndex,
+        startedStageIndex: p.startedStageIndex || 0
       });
       if (endNotes && endNotes.length) this.onProgressionNotifications(endNotes);
     }
@@ -1861,18 +2305,15 @@ class Game {
       shopCoinsEl.textContent = formatNumber(window.progressionManager.getCoins());
     }
 
-    document.getElementById('final-score').textContent = formatNumber(p.score);
-    document.getElementById('final-distance').textContent = Math.floor(p.distance) + 'm';
-    document.getElementById('final-coins').textContent = formatNumber(p.coins);
     document.getElementById('final-combo').textContent = 'x' + p.bestCombo;
     document.getElementById('gameover-reason').textContent = p.deathReason || 'Boa sessão radical!';
+    this.animateGameOverCounters(p.score, runDist, p.coins);
 
-    // Oculta o formulário de registro se a corrida terminou com 0 pontos
+    // Treino Livre não entra no placar competitivo
     if (this.el.registerBox) {
-      this.el.registerBox.hidden = p.score <= 0;
+      this.el.registerBox.hidden = isFree || p.score <= 0;
     }
 
-    // Prepara o formulário de nome do jogador
     if (this.el.playerNameInput) {
       this.el.playerNameInput.value = this.lastPlayerName || 'Luigi';
     }
@@ -1884,17 +2325,24 @@ class Game {
       this.el.registerFeedback.hidden = true;
     }
 
-    // Salva automaticamente no placar local e atualiza o Recorde (ninguém perde pontos ao sair!)
-    if (p.score > 0 && !this._scoreSavedThisRun) {
+    if (!isFree && p.score > 0 && !this._scoreSavedThisRun) {
       this.saveScoreFromGameOver({ auto: true });
     } else {
+      if (this.el.gameoverRankBadge) {
+        if (isFree) {
+          this.el.gameoverRankBadge.hidden = false;
+          this.el.gameoverRankBadge.textContent = '🌟 Modo Treino — moedas e missões salvas (fora do placar)';
+        } else {
+          this.el.gameoverRankBadge.hidden = true;
+        }
+      }
       this.loadLeaderboardView('gameover-leaderboard-list', 'gameover-leaderboard-status', 'global');
     }
 
     // Destaque de novo recorde geral comparado ao recorde anterior à partida
     const banner = document.getElementById('new-record-banner');
     if (banner) {
-      banner.hidden = p.score <= prevTopScore || p.score === 0;
+      banner.hidden = isFree || p.score <= prevTopScore || p.score === 0;
     }
   }
 
@@ -1908,11 +2356,12 @@ class Game {
     const now = new Date();
     const date = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const runDist = p.sessionDistance !== undefined ? p.sessionDistance : (p.distance || 0);
 
     return {
       name,
       score: Math.max(0, Math.floor(p.score)),
-      distance: Math.max(0, Math.floor(p.distance)),
+      distance: Math.max(0, Math.floor(runDist)),
       characterId: char ? char.id : 'luigi_3d',
       characterName: char ? char.name : 'Luigi 3D',
       characterPortrait: char ? char.portrait : 'assets/portraits/portrait_luigi_3d.png',
@@ -1950,7 +2399,7 @@ class Game {
   flushOnlineScoreIfNeeded() {
     if (this.state !== 'GAME_OVER') return;
     if (this._onlineSavedThisRun) return;
-    if (!this.player || this.player.score <= 0) return;
+    if (!this.player || this.player.score <= 0 || this.player.gameMode === 'free' || this.player.endedFreeMode) return;
     // Atualiza o nome local também caso tenha editado no campo antes de sair
     const input = this.el.playerNameInput;
     const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
@@ -1964,7 +2413,7 @@ class Game {
 
   async saveScoreFromGameOver({ auto = false } = {}) {
     const p = this.player;
-    if (p.score <= 0) return;
+    if (p.score <= 0 || p.gameMode === 'free' || p.endedFreeMode) return;
 
     const input = this.el.playerNameInput;
     const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
@@ -1986,6 +2435,19 @@ class Game {
     if (this.el.highscore) this.el.highscore.textContent = formatNumber(this.highScore);
     const hs = document.getElementById('menu-highscore');
     if (hs) hs.textContent = formatNumber(this.highScore);
+
+    if (this.el.gameoverRankBadge && entry) {
+      const localList = this.leaderboard.getAll();
+      const pos = localList.findIndex(item => item.id === entry.id);
+      if (pos >= 0) {
+        this.el.gameoverRankBadge.hidden = false;
+        this.el.gameoverRankBadge.textContent = pos === 0
+          ? '🥇 #1 Melhor Pontuação deste Aparelho!'
+          : `🏅 #${pos + 1} no Placar deste Aparelho`;
+      } else {
+        this.el.gameoverRankBadge.hidden = true;
+      }
+    }
 
     if (auto) {
       if (this.el.registerFeedback && entry) {
@@ -2097,8 +2559,16 @@ class Game {
     this.renderLeaderboard(containerId, fallback);
   }
 
-  clearLeaderboard() {
-    if (confirm('Tem certeza que deseja zerar todas as pontuações salvas neste aparelho?')) {
+  async clearLeaderboard() {
+    const ok = await this.confirmDialog({
+      icon: '🧹',
+      title: 'Zerar placar local?',
+      message: 'Isso apagará todas as pontuações salvas neste aparelho. O Placar Global não será alterado.',
+      confirmText: 'Zerar tudo',
+      cancelText: 'Cancelar',
+      danger: true
+    });
+    if (ok) {
       this.leaderboard.clear();
       this.highScore = 0;
       if (this.el.highscore) this.el.highscore.textContent = '0';
@@ -2153,8 +2623,9 @@ class Game {
         || (item.characterPortrait && !item.characterPortrait.startsWith('data:') ? item.characterPortrait : null)
         || 'assets/portraits/portrait_luigi_3d.png';
 
+      const isCurrentRun = !!(this._lastSavedEntryId && item.id === this._lastSavedEntryId);
       html += `
-        <div class="leader-item ${rankClass}">
+        <div class="leader-item ${rankClass}${isCurrentRun ? ' is-current-run' : ''}">
           <div class="leader-col-left">
             <span class="leader-rank">${rankBadge}</span>
             <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
@@ -2478,6 +2949,7 @@ class Game {
 
   animate(now) {
     requestAnimationFrame(this.animate);
+    this.pollGamepad();
 
     if (this.state === 'PLAYING') {
       // Acumulador com teto: uma aba em segundo plano não gera 500 passos
@@ -2494,6 +2966,40 @@ class Game {
         if (this.state !== 'PLAYING') break;
       }
 
+      this.updateHUD();
+    } else if (this.state === 'FINISHING' && this._finishSeq) {
+      let delta = now - this.lastTime;
+      if (!isFinite(delta) || delta < 0) delta = STEP_MS;
+      delta = Math.min(delta, 50);
+      this.lastTime = now;
+
+      const seq = this._finishSeq;
+      if (seq.hitstopMs > 0) {
+        seq.hitstopMs -= delta;
+      } else {
+        seq.slowMoMs -= delta;
+        seq.slowAcc += delta * 0.25;
+        while (seq.slowAcc >= STEP_MS) {
+          seq.slowAcc -= STEP_MS;
+          this.camera.update(this.player, this.world);
+          window.particleSystem.update();
+          if (!seq.isCleanFinish) {
+            if (!this.player.onGround) {
+              this.player.rotation += 0.08;
+              this.player.y += 1.2;
+            } else {
+              this.player.pitch = Math.max(-0.45, (this.player.pitch || 0) - 0.06);
+              this.player.lean = this.player.pitch;
+            }
+          }
+        }
+        if (seq.slowMoMs <= 0) {
+          this.gameOver();
+        }
+      }
+      this.updateHUD();
+    } else if (this.state === 'RESUMING' || this.state === 'PAUSED') {
+      this.lastTime = now;
       this.updateHUD();
     } else {
       this.lastTime = now;
@@ -2519,7 +3025,7 @@ class Game {
 
     if (this.comboBankTimer > 0) this.comboBankTimer--;
 
-    // Consome eventos físicos do passo para feedback de câmera e HUD
+    // Consome eventos físicos do passo para feedback de câmera, HUD e vibração
     if (Array.isArray(p.frameEvents) && p.frameEvents.length > 0) {
       for (const ev of p.frameEvents) {
         if (ev.type === 'perfect_land') {
@@ -2527,6 +3033,7 @@ class Game {
           this.comboBankMult = Math.max(2, prevComboMult);
           this.comboBankPoints = prevComboPts > 0 ? prevComboPts : (this.comboBankMult * 300);
           this.comboBankTimer = 68;
+          this.haptic(14);
         } else if (ev.type === 'land' && ev.intensity > 0.55) {
           this.camera.shake(Math.min(7, ev.intensity * 6.5), 0.15, 1.0);
         } else if (ev.type === 'ramp') {
@@ -2534,13 +3041,17 @@ class Game {
             this.camera.punchZoom(-0.032);
             this.camera.shake(4.5, 0.2, 0.9);
             this.flash('power');
+            this.haptic([18, 24, 26]);
           } else {
             this.camera.punchZoom(-0.022);
+            this.haptic(12);
           }
         } else if (ev.type === 'grind_start') {
           this.camera.shake(3.2, 0.25, 0.85);
+          this.haptic(10);
         } else if (ev.type === 'damage') {
           this.camera.shake(14, 1.0, 0.35);
+          this.haptic([35, 30, 50]);
         }
       }
     }
@@ -2555,7 +3066,27 @@ class Game {
       }
     }
 
-    if (p.isGameOver) this.gameOver();
+    if (p.isGameOver) {
+      const isCleanTimeUp = p.gameMode === 'time60' && (p.timeLeftSteps || 0) <= 0;
+      if (this.camera.reducedMotion) {
+        this.gameOver();
+        return;
+      }
+      if (!isCleanTimeUp) {
+        window.soundSystem?.stopMusic?.();
+        window.soundSystem?.silenceLoops?.();
+        this.camera.punchZoom(0.024);
+        this.haptic([45, 30, 75]);
+      }
+      this._finishSeq = {
+        hitstopMs: isCleanTimeUp ? 0 : 90,
+        slowMoMs: isCleanTimeUp ? 420 : 580,
+        isCleanFinish: isCleanTimeUp,
+        slowAcc: 0
+      };
+      this.state = 'FINISHING';
+      this.wrapper.dataset.state = 'PLAYING';
+    }
   }
 
   render() {

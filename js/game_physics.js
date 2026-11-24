@@ -206,9 +206,13 @@ class Player {
     this.lives = 3;
     this.maxLives = 5;
     const startStage = Math.max(0, Math.min(STAGES.length - 1, Math.floor(opts.startStageIndex || 0)));
+    this.startedStageIndex = startStage;
     this.currentStageIndex = startStage;
     this.score = 0;
     this.distance = startStage > 0 ? STAGES[startStage].dist : 0;
+    this.startDistance = this.distance;
+    this.sessionDistance = 0;
+    this.endedFreeMode = false;
     this.coins = 0;
     this.invincibleTimer = 0;
     this.turboTimer = 0;
@@ -369,6 +373,7 @@ class Player {
       const notes = window.progressionManager.recordRunEvent(type, amount, {
         ...ctx,
         stageIndex: this.currentStageIndex,
+        startedStageIndex: this.startedStageIndex || 0,
         sportId: this.sportId,
         bestCombo: this.bestCombo
       });
@@ -378,12 +383,16 @@ class Player {
     }
   }
 
+  getDifficultyMult() {
+    return (this.gameMode === 'classic' && this.difficulty === 'hard') ? 1.3 : 1.0;
+  }
+
   getScoreMult() {
     const rankMult = (window.progressionManager && typeof window.progressionManager.getScoreMultiplier === 'function')
       ? window.progressionManager.getScoreMultiplier()
       : 1;
     const activeMult = (this.doubleTimer > 0 ? 2 : 1) * (this.feverTimer > 0 ? 2 : 1);
-    return rankMult * activeMult;
+    return rankMult * activeMult * this.getDifficultyMult();
   }
 
   addScore(basePts) {
@@ -452,13 +461,18 @@ class Player {
     this.updateSpeed(keys);
     this.speedNormalized = this.speed / this.maxSpeed;
 
-    const prevDistInt = Math.floor(this.distance);
-    this.distance += this.speed * 0.1;
-    const newDistInt = Math.floor(this.distance);
+    const prevDistInt = Math.floor(this.sessionDistance);
+    const stepDist = this.speed * 0.1;
+    this.distance += stepDist;
+    this.sessionDistance += stepDist;
+    const newDistInt = Math.floor(this.sessionDistance);
     if (newDistInt > prevDistInt) {
-      this.notifyProgress('distance', newDistInt - prevDistInt, { distance: newDistInt });
+      this.notifyProgress('distance', newDistInt - prevDistInt, {
+        distance: newDistInt,
+        worldDistance: Math.floor(this.distance)
+      });
     }
-    this.score += Math.max(1, Math.floor(this.speed * 0.05 * (this.feverTimer > 0 ? 2 : 1) * (this.doubleTimer > 0 ? 2 : 1)));
+    this.score += Math.max(1, Math.floor(this.speed * 0.05 * this.getDifficultyMult() * (this.feverTimer > 0 ? 2 : 1) * (this.doubleTimer > 0 ? 2 : 1)));
 
     this.checkStageProgression();
     this.handleDuck(keys);

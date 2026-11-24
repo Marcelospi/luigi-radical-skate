@@ -1286,5 +1286,94 @@ console.log('\n=== 31. Dificuldade Facil vs Dificil (abismo vs obstaculos) ===')
   check('Facil: pousar manobra incompleta nao tira vida', semTomboNoFacil, `vidas=${easyTrickRun.player.lives}`);
 }
 
+// ============================================================
+console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio independente ===');
+{
+  // 32a. Comecar na Fase 4 mantem bioma em 2400m mas sessionDistance inicia em 0m
+  if (sandbox.progressionManager?.data?.achievements) {
+    delete sandbox.progressionManager.data.achievements.space_rider;
+    sandbox.progressionManager.data.stats.bestDistance = 0;
+  }
+  const f4Run = newRun();
+  f4Run.player.reset(f4Run.world, { gameMode: 'classic', difficulty: 'easy', startStageIndex: 3 });
+  const distInicialMundo = f4Run.player.distance;
+  const distInicialSessao = f4Run.player.sessionDistance;
+  for (let i = 0; i < 60; i++) step(f4Run.world, f4Run.player, {});
+  const sessaoAvancouCerto = f4Run.player.sessionDistance > 25 && f4Run.player.sessionDistance < 90;
+  const espacoLivreNaoDestravouTrofeu = !sandbox.progressionManager?.data?.achievements?.space_rider;
+
+  // 32b. Modo Dificil (x1.3) rende mais pontos na mesma manobra que o Modo Facil
+  const easyScoreRun = newRun();
+  easyScoreRun.player.reset(easyScoreRun.world, { gameMode: 'classic', difficulty: 'easy' });
+  const ptsFacil = easyScoreRun.player.addScore(100);
+
+  const hardScoreRun = newRun();
+  hardScoreRun.player.reset(hardScoreRun.world, { gameMode: 'classic', difficulty: 'hard' });
+  const ptsDificil = hardScoreRun.player.addScore(100);
+
+  // 32c. SoundSystem com canais independentes (Musica vs SFX) e contagem regressiva
+  const prevSound = sandbox.soundSystem;
+  const mockGainNode = () => ({
+    gain: { value: 1, setTargetAtTime() {}, setValueAtTime() {}, exponentialRampToValueAtTime() {}, linearRampToValueAtTime() {} },
+    connect() {}
+  });
+  const mockOsc = () => ({
+    type: 'sine',
+    frequency: { value: 440, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+    connect() {},
+    start() {},
+    stop() {}
+  });
+  const mockFilter = () => ({
+    type: 'lowpass',
+    frequency: { value: 400, setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+    Q: { value: 1 },
+    connect() {}
+  });
+  sandbox.setTimeout = setTimeout;
+  sandbox.clearTimeout = clearTimeout;
+  sandbox.AudioContext = class {
+    constructor() {
+      this.sampleRate = 44100;
+      this.currentTime = 0;
+      this.state = 'running';
+      this.destination = {};
+    }
+    createGain() { return mockGainNode(); }
+    createOscillator() { return mockOsc(); }
+    createBiquadFilter() { return mockFilter(); }
+    createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) }; }
+    createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {} }; }
+    resume() { return Promise.resolve(); }
+  };
+  load('js/audio.js');
+  let audioOk = false;
+  let audioErr = '';
+  try {
+    const snd = sandbox.soundSystem;
+    snd.init();
+    snd.setMusicVolume(0.35);
+    snd.setSfxVolume(0.8);
+    snd.playCountdownTick(3);
+    snd.playCountdownTick(0);
+    snd.startMenuMusic();
+    snd.stopMusic();
+    audioOk = Math.abs(snd.getMusicVolume() - 0.35) < 0.001 && Math.abs(snd.getSfxVolume() - 0.8) < 0.001;
+  } catch (e) {
+    audioErr = String(e && e.message || e);
+  } finally {
+    sandbox.soundSystem = prevSound;
+  }
+
+  check('Fase 4 inicia com world=2400m e sessionDistance=0m sem dar trofeu gratis',
+    distInicialMundo === 2400 && distInicialSessao === 0 && sessaoAvancouCerto && espacoLivreNaoDestravouTrofeu,
+    `mundo=${distInicialMundo} sessao0=${distInicialSessao} sessao60=${f4Run.player.sessionDistance.toFixed(1)}`);
+  check('Modo Dificil aplica bonus x1.3 de pontos sobre o Modo Facil',
+    ptsDificil === Math.round(ptsFacil * 1.3) && ptsDificil > ptsFacil,
+    `facil=${ptsFacil} vs dificil=${ptsDificil}`);
+  check('SoundSystem suporta volumes independentes (Musica/SFX), Menu Music e Countdown',
+    audioOk === true, audioErr);
+}
+
 console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
 process.exit(failures === 0 ? 0 : 1);

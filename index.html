@@ -12,8 +12,19 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Luigi Skate">
-  <link rel="apple-touch-icon" href="assets/portraits/portrait_luigi_3d.png">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
   <meta name="description" content="Jogo de skate 2D estrelando o Luigi e personagens customizados, com manobras aéreas, oficina, missões, pistas que desabam e mega rampas.">
+
+  <!-- Prévia de compartilhamento (WhatsApp, Discord, redes sociais) -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="pt_BR">
+  <meta property="og:title" content="Luigi Radical Skate 🛹">
+  <meta property="og:description" content="Skate, BMX, Patinete e Patins com manobras radicais, 4 fases, Oficina, Estúdio de Avatares por foto e Placar Global!">
+  <meta property="og:image" content="assets/og-cover.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Luigi Radical Skate 🛹">
+  <meta name="twitter:description" content="Skate, BMX, Patinete e Patins com manobras radicais, 4 fases, Oficina e Placar Global!">
+  <meta name="twitter:image" content="assets/og-cover.png">
 
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070812'/%3E%3Crect x='4' y='13' width='24' height='4' rx='2' fill='%2322d3ee'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23f43f7e'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23f43f7e'/%3E%3C/svg%3E">
 
@@ -85,11 +96,18 @@
           <span id="hud-highscore" class="hud-num">0</span>
         </div>
         <div class="hud-actions">
+          <button type="button" id="btn-finish-free" class="btn-hud-pill" title="Concluir treino e guardar moedas" hidden>🏁 Fim</button>
           <button type="button" id="btn-mute-hud" class="icon-btn" title="Ligar / desligar som (M)" aria-label="Ligar ou desligar som">🔊</button>
+          <button type="button" id="btn-fullscreen-hud" class="icon-btn" title="Tela cheia (F)" aria-label="Alternar tela cheia">⛶</button>
           <button type="button" id="btn-pause-hud" class="icon-btn" title="Pausar (P)" aria-label="Pausar jogo">❚❚</button>
         </div>
       </div>
     </header>
+
+    <!-- Contagem regressiva ao retomar da pausa -->
+    <div id="resume-countdown" class="resume-countdown" aria-live="assertive" hidden>
+      <span id="resume-countdown-num">3</span>
+    </div>
 
     <!-- Notificações de missões e troféus durante a partida -->
     <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
@@ -180,6 +198,10 @@
           <span id="menu-rank-title">Novato</span>
           <em id="menu-mult">x1.0 pts</em>
         </div>
+        <div class="topbar-actions">
+          <button type="button" id="btn-settings-menu" class="icon-btn icon-btn--sm" title="Opções de áudio e controles" aria-label="Opções">⚙️</button>
+          <button type="button" id="btn-fullscreen-menu" class="icon-btn icon-btn--sm" title="Tela cheia (F)" aria-label="Alternar tela cheia">⛶</button>
+        </div>
       </div>
 
       <div class="brandmark">
@@ -196,7 +218,7 @@
         </div>
         <div class="pill-group" id="difficulty-selector" role="radiogroup" aria-label="Dificuldade">
           <button type="button" class="pill-opt active" data-difficulty="easy" aria-pressed="true" title="Fácil: cair no buraco perde 1 vida e volta para a pista">😊 Fácil</button>
-          <button type="button" class="pill-opt" data-difficulty="hard" aria-pressed="false" title="Difícil: objetos tiram 1 vida, mas cair no buraco encerra a partida!">🔥 Difícil</button>
+          <button type="button" class="pill-opt" data-difficulty="hard" aria-pressed="false" title="Difícil (+30% pontos): manobra incompleta dá tombo e cair no buraco encerra a partida!">🔥 Difícil · x1.3</button>
         </div>
         <div class="pill-group" id="stage-selector" role="radiogroup" aria-label="Fase inicial">
           <button type="button" class="pill-opt active" data-stage="0" aria-pressed="true" title="Fase 1: Skatepark ao Pôr do Sol">🌇 F1</button>
@@ -496,12 +518,51 @@
         <article class="instruction">
           <div class="instruction-keys"><span class="tag tag--gold">Oficina &amp; Missões</span></div>
           <h3>Moedas, Loja e Fases</h3>
-          <p>Suas moedas ficam guardadas! Compre visuais, rastros, óculos, coroa e upgrades na <b>Oficina</b>. No modo <b>Fácil</b>, cair no buraco tira 1 vida; no <b>Difícil</b>, cair no buraco encerra a partida na hora!</p>
+          <p>Suas moedas ficam guardadas! Compre visuais, rastros, óculos, coroa e upgrades na <b>Oficina</b>. No modo <b>Difícil (x1.3 pontos)</b>, cair no buraco encerra a partida; aperte <b>F</b> para tela cheia e conecte um controle USB/Bluetooth se quiser!</p>
         </article>
       </div>
 
       <div class="action-row">
         <button class="btn btn-quiet btn-back-menu">Voltar</button>
+      </div>
+    </section>
+
+    <!-- ================= TELA: OPÇÕES ================= -->
+    <section id="screen-settings" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title"><em class="title-ico">⚙️</em> Opções</h2>
+        <p class="screen-sub">Ajuste o volume da música, efeitos sonoros, vibração e tela</p>
+      </div>
+
+      <div class="settings-card">
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>🎵 Volume da Música</strong>
+            <span id="opt-music-val">70%</span>
+          </div>
+          <input type="range" id="opt-music-vol" class="setting-range" min="0" max="100" step="5" value="70" aria-label="Volume da música">
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <strong>🛹 Efeitos Sonoros</strong>
+            <span id="opt-sfx-val">90%</span>
+          </div>
+          <input type="range" id="opt-sfx-vol" class="setting-range" min="0" max="100" step="5" value="90" aria-label="Volume dos efeitos sonoros">
+        </div>
+
+        <label class="setting-toggle">
+          <span>📳 Vibração tátil no celular <small>(impactos e manobras)</small></span>
+          <input type="checkbox" id="opt-vibration" checked>
+        </label>
+
+        <div class="setting-actions-row">
+          <button type="button" id="btn-settings-fullscreen" class="btn btn-ghost btn-sm">⛶ Ativar Tela Cheia (F)</button>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button type="button" id="btn-settings-back" class="btn btn-primary">Voltar</button>
       </div>
     </section>
 
@@ -513,6 +574,8 @@
       </div>
       <nav class="menu-buttons">
         <button type="button" id="btn-resume" class="btn btn-primary btn-lg">Continuar <span class="btn-hint">P</span></button>
+        <button type="button" id="btn-pause-finish-free" class="btn btn-ghost" hidden>🏁 Concluir treino</button>
+        <button type="button" id="btn-pause-settings" class="btn btn-ghost">⚙️ Opções de Áudio</button>
         <button type="button" id="btn-pause-restart" class="btn btn-ghost">Reiniciar corrida</button>
         <button type="button" id="btn-pause-menu" class="btn btn-quiet">Sair para o menu</button>
       </nav>
@@ -521,11 +584,12 @@
     <!-- ================= TELA: FIM DE JOGO ================= -->
     <section id="screen-game-over" class="screen hidden">
       <div class="screen-head">
-        <h2 class="screen-title screen-title--danger">Fim da linha</h2>
+        <h2 id="gameover-title" class="screen-title screen-title--danger">Fim da linha</h2>
         <p class="screen-sub" id="gameover-reason">Boa sessão de skate!</p>
       </div>
 
       <div id="new-record-banner" class="record-banner" hidden>🏆 Novo recorde</div>
+      <p id="gameover-rank-badge" class="gameover-rank-badge" hidden></p>
 
       <div class="result-grid">
         <div class="result-card result-card--primary">
@@ -611,6 +675,19 @@
         <button id="btn-clear-leaderboard" class="btn btn-quiet btn-danger-soft" hidden>Zerar Placar Local</button>
       </div>
     </section>
+
+    <!-- Modal customizado de confirmação (evita confirm() nativo do navegador) -->
+    <div id="confirm-modal" class="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+      <div class="confirm-card">
+        <span id="confirm-icon" class="confirm-icon">⚠️</span>
+        <h3 id="confirm-title">Confirmar ação</h3>
+        <p id="confirm-message"></p>
+        <div class="confirm-actions">
+          <button type="button" id="confirm-cancel" class="btn btn-quiet btn-sm">Cancelar</button>
+          <button type="button" id="confirm-ok" class="btn btn-primary btn-sm">Confirmar</button>
+        </div>
+      </div>
+    </div>
 
   </div>
 

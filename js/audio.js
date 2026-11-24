@@ -5,9 +5,14 @@ class SoundSystem {
   constructor() {
     this.ctx = null;
     this.master = null;
+    this.sfxBus = null;
+    this.musicBus = null;
     this.muted = false;
+    this.sfxVolume = 0.90;
+    this.musicVolume = 0.70;
     this.musicPlaying = false;
     this.musicWanted = false;
+    this.musicMode = 'game'; // 'menu' | 'game'
     this.musicTimer = null;
     this.musicStage = 0;
     this.musicBoosted = false;
@@ -37,9 +42,35 @@ class SoundSystem {
 
     this.isRolling = false;
 
-    // Tentativa de recuperação de preferências
+    // Recuperação de preferências (mudo + volumes independentes)
+    this._loadPrefs();
+  }
+
+  _loadPrefs() {
     try {
       this.muted = localStorage.getItem('luigi_skate_muted') === 'true';
+      const raw = localStorage.getItem('luigi_skate_audio_prefs_v1');
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (p && typeof p === 'object') {
+          if (typeof p.sfx === 'number' && Number.isFinite(p.sfx)) {
+            this.sfxVolume = Math.max(0, Math.min(1, p.sfx));
+          }
+          if (typeof p.music === 'number' && Number.isFinite(p.music)) {
+            this.musicVolume = Math.max(0, Math.min(1, p.music));
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  _savePrefs() {
+    try {
+      localStorage.setItem('luigi_skate_muted', String(this.muted));
+      localStorage.setItem('luigi_skate_audio_prefs_v1', JSON.stringify({
+        sfx: Math.round(this.sfxVolume * 100) / 100,
+        music: Math.round(this.musicVolume * 100) / 100
+      }));
     } catch (e) {}
   }
 
@@ -49,10 +80,18 @@ class SoundSystem {
       if (!AudioCtx) return;
       this.ctx = new AudioCtx();
 
-      // Barramento mestre: um único ponto de volume e de mudo
+      // Barramento mestre + canais independentes de Efeitos e Música
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.85;
+      this.master.gain.value = this.muted ? 0 : 0.88;
       this.master.connect(this.ctx.destination);
+
+      this.sfxBus = this.ctx.createGain();
+      this.sfxBus.gain.value = this.sfxVolume;
+      this.sfxBus.connect(this.master);
+
+      this.musicBus = this.ctx.createGain();
+      this.musicBus.gain.value = this.musicVolume;
+      this.musicBus.connect(this.master);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
@@ -63,9 +102,45 @@ class SoundSystem {
     this.startRampRideSound();
   }
 
-  /** Destino de todos os sons — cai no destination caso o master não exista. */
+  /** Destino dos efeitos sonoros — cai no master ou destination se necessário. */
   output() {
-    return this.master || (this.ctx && this.ctx.destination);
+    return this.sfxBus || this.master || (this.ctx && this.ctx.destination);
+  }
+
+  /** Destino exclusivo da música de fundo. */
+  musicOutput() {
+    return this.musicBus || this.master || (this.ctx && this.ctx.destination);
+  }
+
+  getSfxVolume() { return this.sfxVolume; }
+  getMusicVolume() { return this.musicVolume; }
+
+  setSfxVolume(val) {
+    const num = Number(val);
+    this.sfxVolume = Number.isFinite(num) ? Math.max(0, Math.min(1, num)) : 0.9;
+    this._savePrefs();
+    if (this.sfxBus && this.ctx) {
+      this.sfxBus.gain.setTargetAtTime(this.sfxVolume, this.ctx.currentTime, 0.02);
+    }
+    if (this.sfxVolume <= 0.001) {
+      this.silenceLoops();
+    }
+    return this.sfxVolume;
+  }
+
+  setMusicVolume(val) {
+    const num = Number(val);
+    this.musicVolume = Number.isFinite(num) ? Math.max(0, Math.min(1, num)) : 0.7;
+    this._savePrefs();
+    if (this.musicBus && this.ctx) {
+      this.musicBus.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.03);
+    }
+    if (this.musicVolume <= 0.001) {
+      this.stopMusic(true);
+    } else if (!this.muted && this.musicWanted && !this.musicPlaying) {
+      this.startMusic(this.musicMode);
+    }
+    return this.musicVolume;
   }
 
   /** Gera e armazena em cache um buffer de ruído rosa suave (2 segundos). */
@@ -109,19 +184,17 @@ class SoundSystem {
 
   toggleMute() {
     this.muted = !this.muted;
-    try {
-      localStorage.setItem('luigi_skate_muted', String(this.muted));
-    } catch (e) {}
+    this._savePrefs();
 
     if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(this.muted ? 0 : 0.85, this.ctx.currentTime, 0.02);
+      this.master.gain.setTargetAtTime(this.muted ? 0 : 0.88, this.ctx.currentTime, 0.02);
     }
 
     if (this.muted) {
       this.stopMusic(true);
       this.silenceLoops();
-    } else if (this.musicWanted && (!window.game || window.game.state === 'PLAYING')) {
-      this.startMusic();
+    } else if (this.musicWanted && this.musicVolume > 0.001) {
+      this.startMusic(this.musicMode);
     }
     return this.muted;
   }
@@ -1138,19 +1211,59 @@ class SoundSystem {
     });
   }
 
+  /** Tick sonoro curto para contagem regressiva 3 · 2 · 1 · VAI! */
+  playCountdownTick(num = 3) {
+    if (this.muted || this.sfxVolume <= 0.001 || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const isGo = num <= 0;
+    const freqMap = { 3: 440, 2: 523.25, 1: 659.25 };
+    const freq = isGo ? 880 : (freqMap[num] || 440);
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = isGo ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(freq, now);
+    if (isGo) osc.frequency.exponentialRampToValueAtTime(1046.5, now + 0.14);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(isGo ? 0.22 : 0.16, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + (isGo ? 0.22 : 0.13));
+
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + (isGo ? 0.24 : 0.14));
+  }
+
   setMusicContext(stageIndex = 0, boosted = false) {
     this.musicStage = Math.max(0, Math.min(3, Math.floor(stageIndex || 0)));
     this.musicBoosted = !!boosted;
   }
 
+  startMenuMusic() {
+    this.startMusic('menu');
+  }
+
   // ==========================================================
-  // Trilha sonora procedural dinâmica por Bioma + Turbo/Radical
+  // Trilha sonora procedural dinâmica por Bioma + Turbo/Radical + Menu Lo-Fi
   // ==========================================================
 
-  startMusic() {
+  startMusic(mode = null) {
+    if (mode === 'menu' || mode === 'game') {
+      this.musicMode = mode;
+    } else if (!this.musicMode) {
+      this.musicMode = 'game';
+    }
     this.musicWanted = true;
-    if (this.muted || this.musicPlaying || !this.ctx) return;
+    if (this.muted || this.musicVolume <= 0.001 || this.musicPlaying || !this.ctx) return;
     this.musicPlaying = true;
+
+    const menuTheme = {
+      bass: [110, 0, 130.81, 0, 146.83, 0, 130.81, 0, 98, 0, 123.47, 0, 130.81, 0, 164.81, 0],
+      lead: [329.63, 0, 392.00, 440.00, 0, 523.25, 440.00, 0, 293.66, 0, 392.00, 0, 329.63, 440.00, 392.00, 0],
+      wave: 'sine',
+      stepMs: 245
+    };
 
     const themes = [
       // Fase 1: Skatepark Rock-Synth animado (Lá menor)
@@ -1186,10 +1299,17 @@ class SoundSystem {
     let noteIdx = 0;
 
     const playNote = () => {
-      if (!this.musicPlaying || this.muted || !this.ctx) return;
+      if (!this.musicPlaying || this.muted || this.musicVolume <= 0.001 || !this.ctx) {
+        this.musicPlaying = false;
+        this.musicTimer = null;
+        return;
+      }
 
-      const theme = themes[this.musicStage % themes.length] || themes[0];
-      const delay = this.musicBoosted ? Math.max(116, theme.stepMs - 24) : theme.stepMs;
+      const isMenu = this.musicMode === 'menu';
+      const theme = isMenu ? menuTheme : (themes[this.musicStage % themes.length] || themes[0]);
+      const delay = isMenu
+        ? theme.stepMs
+        : (this.musicBoosted ? Math.max(116, theme.stepMs - 24) : theme.stepMs);
 
       // Evita enfileirar osciladores enquanto o AudioContext ainda está suspenso
       if (this.ctx.state !== 'running') {
@@ -1201,28 +1321,30 @@ class SoundSystem {
       const step = noteIdx % 16;
       const freq = theme.bass[step];
       const leadFreq = theme.lead[step];
+      const volScale = isMenu ? 0.45 : 1.0;
 
       if (freq > 0) {
-        // Baixo synthwave quente
+        // Baixo synthwave quente (mais suave e filtrado no menu)
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         const filter = this.ctx.createBiquadFilter();
 
-        osc.type = 'sawtooth';
+        osc.type = isMenu ? 'triangle' : 'sawtooth';
         osc.frequency.setValueAtTime(freq, now);
 
         filter.type = 'lowpass';
-        filter.frequency.setValueAtTime((step % 4 === 0 ? 540 : 400) + (this.musicBoosted ? 260 : 0), now);
+        const cutoff = isMenu ? 310 : ((step % 4 === 0 ? 540 : 400) + (this.musicBoosted ? 260 : 0));
+        filter.frequency.setValueAtTime(cutoff, now);
 
-        gain.gain.setValueAtTime(0.056, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+        gain.gain.setValueAtTime(0.056 * volScale, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + (isMenu ? 0.24 : 0.16));
 
         osc.connect(filter);
         filter.connect(gain);
-        gain.connect(this.output());
+        gain.connect(this.musicOutput());
 
         osc.start(now);
-        osc.stop(now + 0.17);
+        osc.stop(now + (isMenu ? 0.25 : 0.17));
       }
 
       if (leadFreq > 0) {
@@ -1230,42 +1352,44 @@ class SoundSystem {
         const lGain = this.ctx.createGain();
         lOsc.type = theme.wave;
         lOsc.frequency.setValueAtTime(leadFreq, now);
-        lGain.gain.setValueAtTime(this.musicBoosted ? 0.044 : 0.028, now);
-        lGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        lGain.gain.setValueAtTime((this.musicBoosted && !isMenu ? 0.044 : 0.028) * volScale, now);
+        lGain.gain.exponentialRampToValueAtTime(0.001, now + (isMenu ? 0.22 : 0.14));
         lOsc.connect(lGain);
-        lGain.connect(this.output());
+        lGain.connect(this.musicOutput());
         lOsc.start(now);
-        lOsc.stop(now + 0.15);
+        lOsc.stop(now + (isMenu ? 0.23 : 0.15));
       }
 
-      // Bumbo nos tempos fortes + chimbal leve nos contratempos
-      if (step % 4 === 0) {
-        const kick = this.ctx.createOscillator();
-        const kGain = this.ctx.createGain();
-        kick.type = 'sine';
-        kick.frequency.setValueAtTime(118, now);
-        kick.frequency.exponentialRampToValueAtTime(42, now + 0.09);
-        kGain.gain.setValueAtTime(0.085, now);
-        kGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-        kick.connect(kGain);
-        kGain.connect(this.output());
-        kick.start(now);
-        kick.stop(now + 0.11);
-      } else if (step % 4 === 2 || (this.musicBoosted && step % 2 === 1)) {
-        const hatBuf = this.getSfxNoiseBuffer('music_hat', 0.032, t => Math.pow(1 - t, 3.5));
-        if (hatBuf) {
-          const hat = this.ctx.createBufferSource();
-          hat.buffer = hatBuf;
-          const hFilter = this.ctx.createBiquadFilter();
-          hFilter.type = 'highpass';
-          hFilter.frequency.setValueAtTime(6800, now);
-          const hGain = this.ctx.createGain();
-          hGain.gain.setValueAtTime(this.musicBoosted ? 0.022 : 0.014, now);
-          hGain.gain.exponentialRampToValueAtTime(0.001, now + 0.032);
-          hat.connect(hFilter);
-          hFilter.connect(hGain);
-          hGain.connect(this.output());
-          hat.start(now);
+      // Bumbo nos tempos fortes + chimbal leve nos contratempos (sem bateria pesada no menu)
+      if (!isMenu) {
+        if (step % 4 === 0) {
+          const kick = this.ctx.createOscillator();
+          const kGain = this.ctx.createGain();
+          kick.type = 'sine';
+          kick.frequency.setValueAtTime(118, now);
+          kick.frequency.exponentialRampToValueAtTime(42, now + 0.09);
+          kGain.gain.setValueAtTime(0.085, now);
+          kGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+          kick.connect(kGain);
+          kGain.connect(this.musicOutput());
+          kick.start(now);
+          kick.stop(now + 0.11);
+        } else if (step % 4 === 2 || (this.musicBoosted && step % 2 === 1)) {
+          const hatBuf = this.getSfxNoiseBuffer('music_hat', 0.032, t => Math.pow(1 - t, 3.5));
+          if (hatBuf) {
+            const hat = this.ctx.createBufferSource();
+            hat.buffer = hatBuf;
+            const hFilter = this.ctx.createBiquadFilter();
+            hFilter.type = 'highpass';
+            hFilter.frequency.setValueAtTime(6800, now);
+            const hGain = this.ctx.createGain();
+            hGain.gain.setValueAtTime(this.musicBoosted ? 0.022 : 0.014, now);
+            hGain.gain.exponentialRampToValueAtTime(0.001, now + 0.032);
+            hat.connect(hFilter);
+            hFilter.connect(hGain);
+            hGain.connect(this.musicOutput());
+            hat.start(now);
+          }
         }
       }
 

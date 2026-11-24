@@ -700,7 +700,8 @@ class ProgressionManager {
     if (stats.totalSmashes >= 10) this._tryUnlockAchievement('smasher', notifications);
     if (stats.totalWords >= 1) this._tryUnlockAchievement('word_hunter', notifications);
     if (stats.totalCoins >= 1000) this._tryUnlockAchievement('rich_kid', notifications);
-    if ((Number(safeCtx.stageIndex) || 0) >= 3 || stats.bestDistance >= 2400) {
+    const reachedSpaceLegit = (Number(safeCtx.stageIndex) || 0) >= 3 && (Number(safeCtx.startedStageIndex) || 0) < 3;
+    if (reachedSpaceLegit || stats.bestDistance >= 2400) {
       this._tryUnlockAchievement('space_rider', notifications);
     }
 

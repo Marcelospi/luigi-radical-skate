@@ -109,7 +109,7 @@ class CharacterManager {
           jump:  'assets/sprites/luigi_3d_jump.png',
           trick: 'assets/sprites/luigi_3d_trick.png'
         },
-        stats: { velocidade: 'Alta', salto: 'Super Alto', manobras: 'Épicas' },
+        stats: { visual: 'Rig 3D', favorito: '🛹 Skate', estilo: 'Radical' },
         width: 105,
         height: 130,
         duckHeight: 85
@@ -129,7 +129,7 @@ class CharacterManager {
           jump:  'assets/sprites/luigi_real_jump.png',
           trick: 'assets/sprites/luigi_real_trick.png'
         },
-        stats: { velocidade: 'Alta', salto: 'Preciso', manobras: 'Clássicas' },
+        stats: { visual: 'Clássico', favorito: '🛹 Street', estilo: 'Realista' },
         width: 105,
         height: 130,
         duckHeight: 85
@@ -149,7 +149,7 @@ class CharacterManager {
         headSize: 'large',
         useHelmet: false,
         hasPhoto: false,
-        stats: { velocidade: 'Veloz', salto: 'Ágil', manobras: 'Estilosas' },
+        stats: { visual: 'Neon 2D', favorito: '🛼 Patins', estilo: 'Elétrico' },
         width: 105,
         height: 130,
         duckHeight: 85
@@ -170,7 +170,7 @@ class CharacterManager {
         useHelmet: true,
         hasPhoto: false,
         unlockPrice: 750,
-        stats: { velocidade: 'Turbo', salto: 'Cósmico', manobras: 'Lendárias' },
+        stats: { visual: 'Galáctico', favorito: '🚲 BMX', estilo: 'Cósmico' },
         width: 105,
         height: 130,
         duckHeight: 85
@@ -1174,9 +1174,9 @@ class CharacterManager {
       portrait: headDataUrl,
       sprites: fallbackSprites,
       stats: {
-        velocidade: 'Máxima',
-        salto: 'Foguete',
-        manobras: 'Radical'
+        visual: fullPhoto ? 'Foto 2D' : (hasPhoto ? 'Rig Foto' : 'Avatar 2D'),
+        favorito: '🌟 Todos',
+        estilo: 'Exclusivo'
       },
       width: 105,
       height: 130,

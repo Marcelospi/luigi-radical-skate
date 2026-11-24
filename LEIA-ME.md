@@ -1,6 +1,6 @@
 # Luigi Radical Skate 🛹
 
-Jogo de skate e esportes radicais no navegador com **4 modos de locomoção** (🛹 **Skate**, 🚲 **Bicicleta BMX**, 🛴 **Patinete** e 🛼 **Patins**), física realista, rampas com **Lip Boost**, **Grind** em corrimãos, 4 fases temáticas, áudio procedural via Web Audio API e **Estúdio de Personagens** por foto.
+Jogo de skate e esportes radicais no navegador com **4 modos de locomoção** (🛹 **Skate**, 🚲 **Bicicleta BMX**, 🛴 **Patinete** e 🛼 **Patins**), física calibrada a 60 Hz, rampas com **Lip Boost**, **Grind** em corrimãos, 4 fases temáticas, **Oficina & Loja**, **Missões & Troféus**, **Placar Universal Global**, áudio independente via Web Audio API, **Estúdio de Personagens** e instalação como App (**PWA**).
 
 ---
 
@@ -17,76 +17,87 @@ Escolha seu estilo no menu principal (salvo automaticamente):
 
 ---
 
-## Como Jogar no Computador
+## Modos de Jogo e Dificuldades
 
-Dê um duplo clique no arquivo **`JOGAR.bat`** na pasta do projeto.
+- **🛹 Clássico**: comece com 3 vidas (até 5 ao desbloquear fases). Escolha entre:
+  - **😊 Fácil**: cair no buraco ou errar o giro da manobra não encerra a partida na hora (o abismo custa 1 vida e resgata o skatista).
+  - **🔥 Difícil · x1.3**: **+30% de pontos** em tudo! Objetos tiram 1 vida, mas pousar manobra incompleta dá tombo e **cair no buraco encerra a partida**.
+- **⏱️ 60s**: faça a maior pontuação possível em 60 segundos sem perder vidas.
+- **🌟 Treino**: pratique manobras, teste os esportes e colete moedas sem perder vidas. Clique em **🏁 Fim** no topo (ou na Pausa) quando quiser concluir e guardar suas moedas na carteira (fora do placar competitivo).
 
+---
+
+## Oficina, Missões, Troféus e Poderes
+
+- **🛠️ Oficina & Loja**: gaste as moedas acumuladas para destravar novos visuais de equipamento (até o *Prisma Lendário*), **Rastros** coloridos, **Acessórios** (óculos, boné, fone DJ, crista de dino, antena espacial, coroa), novos **Personagens** (como o *Léo Espacial*) e **Poderes** permanentes (*Ímã Turbinado*, *Super Turbo+*, *Carga Radical* e *Cofre de Ouro*).
+- **🎯 Missões & Troféus**: complete as 3 missões ativas para abrir o **Baú de Nível (+100 moedas)** e aumentar seu multiplicador permanente de pontos.
+- **Poderes na pista**: **Super Turbo**, **Escudo**, **Ímã de Moedas 🧲**, **Pontos 2X ⭐**, letras **L-U-I-G-I** e **Modo Radical x2** (quebra caixas, placas e drones!).
+
+---
+
+## Como Jogar no Computador e Instalar como App (PWA)
+
+Dê um duplo clique no arquivo **`JOGAR.bat`** na pasta do projeto:
 - Ele inicia o servidor local automaticamente usando Python e abre o jogo em `http://localhost:8000`.
 - Mostra também o endereço IP local da sua rede Wi-Fi para jogar no celular pelo navegador.
-- Quando terminar de jogar, basta fechar a janela do terminal.
+- Pelo Chrome/Edge (no PC ou Android) ou Safari (iOS), você pode usar **"Instalar App"** / **"Adicionar à Tela Inicial"** para abrir em tela cheia e jogar até offline.
 
 ---
 
-## Controles
+## Controles (Teclado, Celular e Controle Bluetooth/USB)
 
-| Ação | Teclado | Celular |
-|---|---|---|
-| Pular (Ollie) / Lip Boost no topo da rampa | `Espaço`, `W` ou `↑` | Botão **PULAR** |
-| Abaixar (chão) / Queda rápida (ar) / Sair do Grind | `S` ou `↓` | Botão **ABAIXAR** |
-| Remar (Acelerar) | `→` ou `D` | Botão **REMAR** |
-| Freio leve | `←` ou `A` | — |
-| Kickflip | `Z` | Botão **FLIP** |
-| Giro 360° | `X` | Botão **360°** |
-| Indy Grab | `C` | Botão **GRAB** |
-| Super Flip | `Espaço` novamente no ar | Botão **PULAR** no ar |
-| Pausar | `P` ou `Esc` | Botão `❚❚` |
-| Mudo | `M` | Botão 🔊 |
+| Ação | Teclado | Celular | Controle (Gamepad) |
+|---|---|---|---|
+| Pular (Ollie) / Lip Boost / Pulo Duplo | `Espaço`, `W` ou `↑` | Botão **PULAR** ou deslize ↑ | `A` / Cross / D-Pad ↑ |
+| Abaixar / Queda rápida / Sair do Grind | `S` ou `↓` | Botão **ABAIXAR** ou deslize ↓ | D-Pad ↓ / Analógico ↓ |
+| Remar (Acelerar) | `→` ou `D` | Botão **REMAR** ou deslize → | D-Pad → / Analógico → |
+| Freio leve | `←` ou `A` | — | D-Pad ← / Analógico ← |
+| Manobras | `Z`, `X`, `C` (`1/2/3`), `Shift` ou 2º toque em `↑`/`Espaço` | Botões de manobra | `X`, `Y`, `B`, `LB`, `RB`, `LT`, `RT` |
+| Pausar / Retomar (com contagem `3·2·1`) | `P` ou `Esc` | Botão `❚❚` | `Start` |
+| Mudo / Tela Cheia | `M` (som) · `F` (tela cheia) | Botões `🔊` / `⛶` | — |
 
-- **Ollie variável**: segurar a tecla de pulo salta mais alto.
-- **Lip Boost**: aperte Pular perto do topo da rampa para decolar mais alto com impulso extra.
-- **Grind em corrimãos**: pouse sobre os corrimãos para deslizar com faíscas metálicas, multiplicar o combo e pular direto saindo do trilho.
-- **Combos**: encadear manobras no ar e pousar limpo rende bônus de **Pouso Perfeito**.
+Pelo botão **⚙️ Opções** (no Menu ou na Pausa), você regula separadamente o **Volume da Música**, **Efeitos Sonoros**, **Vibração no Celular** e **Tela Cheia**.
 
 ---
 
-## Fases
+## Fases e Placar Universal
 
-O cenário e a iluminação mudam suavemente conforme a distância, e cada nova fase dá **+1 skate e +1.000 pontos**:
+O cenário, clima e trilha sonora mudam suavemente conforme a distância, e cada nova fase dá **+1 vida (no Clássico) e +1.000 pontos**:
 
 | | Fase | Distância |
 |---|---|---|
 | 🌇 | Skatepark ao Pôr do Sol | 0 a 600m |
 | 🏙️ | Metrópole Cyberpunk Neon | 600 a 1.400m |
 | 🌴 | Praia & Píer Tropical | 1.400 a 2.400m |
-| 🚀 | Pista Cósmica das Estrelas | 2.400m em diante |
+| 🚀 | Pista Cósmica das Estrelas (baixa gravidade!) | 2.400m em diante |
 
-A **Fase 1 não tem abismos nem pistas que desabam** — ideal para pegar o ritmo. Caindo no vazio com mais de uma vida, o resgate devolve o skatista para a pista custando um skate.
-
-O placar guarda até 40 pontuações com nome, data e personagem, salvas localmente no navegador de cada aparelho (`localStorage`).
+O placar guarda suas melhores marcas localmente (`localStorage`) e sincroniza com o **Placar Universal Online (Firebase Firestore)** — sempre medindo a **distância real percorrida na sessão** e filtrável por esporte.
 
 ---
 
 ## Estúdio de Personagens (100% Local e Privado)
 
-No menu do jogo, acesse **Criar novo** para tirar uma foto na hora pela **câmera** ou escolher da galeria:
-
-- Ajuste **Esquerda ↔ Direita**, **Cima ↕ Baixo**, **Zoom**, **Espelhar foto** ou **arraste direto na prévia** para encaixar o rosto sob o **capacete SK8 oficial** no boneco articulado (ou use a foto inteira se preferir).
-- **Privacidade garantida**: nenhuma foto é enviada para servidores externos — tudo é processado e salvo exclusivamente no navegador do seu aparelho (`localStorage`).
+No menu do jogo, acesse **✨ Criar avatar** para montar um skatista sem foto (escolhendo gênero, tom de pele, roupa, cabelo e acessório) ou tirar/escolher uma foto da galeria/câmera:
+- Ajuste **Esquerda ↔ Direita**, **Cima ↕ Baixo**, **Zoom**, **Espelhar foto**, tamanho do rosto ou **arraste direto na prévia** com visualização ao vivo do boneco inteiro na pista.
+- **Privacidade garantida**: nenhuma foto é enviada para servidores externos — tudo é processado e salvo exclusivamente no navegador do seu aparelho.
 
 ---
 
-## Estrutura do Projeto
+## Estrutura e Testes
 
-```
-index.html               página principal e HUD
-css/style.css            visual da interface e responsividade
-js/game_physics.js       física do skate, rampas, grind e rig 2.5D articulado
-js/game_world.js         geração da pista, 4 biomas, texturas e iluminação
-js/main.js               loop principal, câmera, telas e HUD
-js/particles.js          partículas (faíscas, poeira, ondas de choque)
-js/audio.js              sons realistas e música sintetizada via Web Audio API
+```text
+index.html               página principal, HUD, Opções e modais
+css/style.css            design system neon e responsividade (Container Queries)
+manifest.json / sw.js    instalação PWA e funcionamento offline
+js/game_physics.js       física 60 Hz, rampas, grind e rig 2.5D articulado com IK
+js/game_world.js         geração procedural, 4 biomas, clima e obstáculos
+js/main.js               loop, câmera, Gamepad, contagem, HUD e fluxo de telas
+js/particles.js          partículas cacheadas, faíscas e textos flutuantes
+js/audio.js              canais separados de Música e SFX via Web Audio API
+js/progression.js        carteira, Oficina, Missões, Baú de Nível e Troféus
 js/character_manager.js  personagens e Estúdio de Personagens por foto
-JOGAR.bat                atalho de 1 clique para abrir o jogo no Windows
+js/leaderboard_online.js integração segura com Firebase Firestore
+tools/teste_fisica.js    suíte automatizada de física, regras e áudio
 ```
 
 ### Rodar os testes automatizados

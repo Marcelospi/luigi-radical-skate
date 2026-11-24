@@ -17,9 +17,9 @@
         "trick": "assets/sprites/luigi_3d_trick.png"
       },
       "stats": {
-        "velocidade": "Alta",
-        "salto": "Super Alto",
-        "manobras": "Épicas"
+        "visual": "Rig 3D",
+        "favorito": "🛹 Skate",
+        "estilo": "Radical"
       },
       "width": 105,
       "height": 130,
@@ -41,9 +41,9 @@
         "trick": "assets/sprites/luigi_real_trick.png"
       },
       "stats": {
-        "velocidade": "Alta",
-        "salto": "Preciso",
-        "manobras": "Clássicas"
+        "visual": "Clássico",
+        "favorito": "🛹 Street",
+        "estilo": "Realista"
       },
       "width": 105,
       "height": 130,
@@ -65,9 +65,9 @@
       "useHelmet": false,
       "hasPhoto": false,
       "stats": {
-        "velocidade": "Veloz",
-        "salto": "Ágil",
-        "manobras": "Estilosas"
+        "visual": "Neon 2D",
+        "favorito": "🛼 Patins",
+        "estilo": "Elétrico"
       },
       "width": 105,
       "height": 130,
@@ -90,9 +90,9 @@
       "hasPhoto": false,
       "unlockPrice": 750,
       "stats": {
-        "velocidade": "Turbo",
-        "salto": "Cósmico",
-        "manobras": "Lendárias"
+        "visual": "Galáctico",
+        "favorito": "🚲 BMX",
+        "estilo": "Cósmico"
       },
       "width": 105,
       "height": 130,
