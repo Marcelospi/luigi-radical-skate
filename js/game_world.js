@@ -227,11 +227,13 @@ class GameWorld {
     return 'asphalt';
   }
 
-  reset() {
+  reset(opts = {}) {
     this.groundY = 520;
     this.deathY = 860;
 
     this.platforms = [];
+    this.elevatedPlatforms = [];
+    this.pads = [];
     this.ramps = [];
     this.rails = [];
     this.obstacles = [];
@@ -243,6 +245,10 @@ class GameWorld {
     this.playerDistance = 0;
     this._playerTurbo = false;
     this._meteors = [];
+    this._letterCounter = 0;
+
+    this.recordDistance = Math.max(0, Math.floor(opts.recordDistance || 0));
+    this.recordPassed = false;
 
     if (!this.layers && typeof document !== 'undefined') {
       this.buildLayers();
@@ -273,7 +279,7 @@ class GameWorld {
       triggerFall() {
         if (this.triggered) return;
         this.triggered = true;
-        if (window.soundSystem) window.soundSystem.playPavementCrumble();
+        if (window.soundSystem && window.soundSystem.playPavementCrumble) window.soundSystem.playPavementCrumble();
         if (window.particleSystem) {
           window.particleSystem.addFloatingText(
             'PULE!', this.x + this.width * 0.5, this.y - 46, PALETTE.danger, 26
@@ -334,15 +340,94 @@ class GameWorld {
     this.scroll += speed;
     this.time++;
     this.playerDistance = player.distance || 0;
-    this._playerTurbo = (player.turboTimer || 0) > 0;
+    this._playerTurbo = (player.turboTimer || 0) > 0 || (player.feverTimer || 0) > 0;
 
     this.updatePlatforms(speed);
+    this.updateElevatedPlatforms(speed);
+    this.updatePads(speed, player);
     this.updateRamps(speed);
     this.updateRails(speed);
     this.updateObstacles(speed, player);
     this.updateCollectibles(speed, player);
+    this.updateRecordFlag(player);
     this.updateAmbient(speed);
     this.generate(player);
+  }
+
+  updateElevatedPlatforms(speed) {
+    for (let i = this.elevatedPlatforms.length - 1; i >= 0; i--) {
+      const ep = this.elevatedPlatforms[i];
+      ep.x -= speed;
+      if (ep.x + ep.width < -260) this.elevatedPlatforms.splice(i, 1);
+    }
+  }
+
+  updatePads(speed, player) {
+    const pHit = player.getHitbox();
+    for (let i = this.pads.length - 1; i >= 0; i--) {
+      const pad = this.pads[i];
+      pad.x -= speed;
+      if (pad.anim > 0) pad.anim--;
+
+      if (!pad.used) {
+        const px = pHit.x + pHit.w * 0.5;
+        const foot = player.bottom;
+        const hitsX = px >= pad.x - 10 && px <= pad.x + pad.width + 10;
+        const hitsY = Math.abs(foot - pad.y) <= 22 && player.vy >= -2;
+        if (hitsX && hitsY) {
+          pad.used = true;
+          pad.anim = 18;
+          if (pad.type === 'bounce') {
+            player.jump(-18.6, { keepCombo: false, fromRamp: true });
+            const pts = player.addScore ? player.addScore(180) : 180;
+            if (!player.addScore) player.score += pts;
+            player.addFever?.(14);
+            if (window.soundSystem && window.soundSystem.playBounce) window.soundSystem.playBounce();
+            if (window.particleSystem) {
+              window.particleSystem.emitShockwave?.(pad.x + pad.width * 0.5, pad.y, '#34d399', 82);
+              window.particleSystem.emitSparks?.(pad.x + pad.width * 0.5, pad.y, 18, '#34d399');
+              window.particleSystem.addFloatingText?.(`TRAMPOLIM! +${pts}`, pad.x + pad.width * 0.5, pad.y - 60, '#34d399', 22);
+            }
+            if (window.game && window.game.camera) {
+              window.game.camera.shake(4.5, 0, 1);
+              window.game.camera.punchZoom?.(-0.02);
+            }
+          } else if (pad.type === 'speed') {
+            player.speed = Math.min(player.maxSpeed * 1.4, player.speed + 4.5);
+            player.invincibleTimer = Math.max(player.invincibleTimer, 20);
+            const pts = player.addScore ? player.addScore(120) : 120;
+            if (!player.addScore) player.score += pts;
+            player.addFever?.(10);
+            if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
+            if (window.particleSystem) {
+              window.particleSystem.emitSpeedBurst?.(player.x + player.width * 0.5, player.bottom - 20, '#22d3ee');
+              window.particleSystem.addFloatingText?.(`IMPULSO! +${pts}`, pad.x + pad.width * 0.5, pad.y - 54, '#22d3ee', 22);
+            }
+            if (window.game && window.game.camera) {
+              window.game.camera.shake(3.5, 1, 0);
+              window.game.camera.punchZoom?.(-0.018);
+            }
+          }
+        }
+      }
+
+      if (pad.x + pad.width < -240) this.pads.splice(i, 1);
+    }
+  }
+
+  updateRecordFlag(player) {
+    if (!this.recordDistance || this.recordDistance < 100 || this.recordPassed) return;
+    if ((player.distance || 0) >= this.recordDistance) {
+      this.recordPassed = true;
+      const pts = player.addScore ? player.addScore(500) : 500;
+      if (!player.addScore) player.score += pts;
+      if (window.soundSystem && window.soundSystem.playStageClear) window.soundSystem.playStageClear();
+      if (window.particleSystem) {
+        window.particleSystem.emitConfetti?.(player.x + player.width * 0.5, player.y, 34);
+        window.particleSystem.addFloatingText?.(`NOVO RECORDE NA PISTA! +${pts}`, player.x + player.width * 0.5, player.y - 78, '#fbbf24', 26);
+      }
+      if (window.game) window.game.flash('power');
+    }
   }
 
   updatePlatforms(speed) {
@@ -397,13 +482,68 @@ class GameWorld {
   }
 
   updateObstacles(speed, player) {
+    const pHit = player.getHitbox();
     for (let i = this.obstacles.length - 1; i >= 0; i--) {
       const o = this.obstacles[i];
       o.x -= speed;
 
+      if (o.type === 'drone') {
+        const baseY = o.baseY !== undefined ? o.baseY : (o.baseY = o.y);
+        o.y = baseY + Math.sin(this.time * 0.075 + (o.phase || 0)) * 24;
+      } else if (o.type === 'barrel') {
+        // Só inicia rolagem extra quando entra próximo da tela, impedindo que role para fora da sua plataforma/abismo
+        if (o.x < 1380) {
+          o.x -= (o.rollSpeed || 1.4);
+          o.rot = (o.rot || 0) - 0.09;
+        }
+      }
+
+      if (player.isGameOver) {
+        if (o.x + o.width < -260) this.obstacles.splice(i, 1);
+        continue;
+      }
+
       if (!o.hit && this.hitsObstacle(player, o)) {
         o.hit = true;
-        player.takeDamage(o.damageReason);
+        if ((player.turboTimer || 0) > 0 || (player.feverTimer || 0) > 0) {
+          // Quebra o obstáculo no Turbo ou Modo Radical!
+          o.smashed = true;
+          player.smashedCount = (player.smashedCount || 0) + 1;
+          const pts = player.addScore ? player.addScore(150) : 150;
+          if (!player.addScore) player.score += pts;
+          player.addFever?.(10);
+          player.notifyProgress?.('smash', 1);
+          if (window.soundSystem && window.soundSystem.playSmash) window.soundSystem.playSmash();
+          if (window.particleSystem) {
+            window.particleSystem.emitObstacleSmash?.(o.x + o.width * 0.5, o.y + o.height * 0.5, '#fbbf24');
+            window.particleSystem.addFloatingText?.(`ESMAGA! +${pts}`, o.x + o.width * 0.5, o.y - 28, '#fbbf24', 24);
+          }
+          if (window.game) window.game.camera.shake(6);
+          this.obstacles.splice(i, 1);
+          continue;
+        } else {
+          player.takeDamage(o.damageReason);
+        }
+      } else if (!o.hit && !o.nearMissAwarded) {
+        // Mede proximidade enquanto o obstáculo passa perto do skatista ("QUASE!")
+        const dxGap = Math.max(0, Math.max(o.x - (pHit.x + pHit.w), pHit.x - (o.x + o.width)));
+        const dyGap = Math.max(0, Math.max(o.y - (pHit.y + pHit.h), pHit.y - (o.y + o.height)));
+        const gap = Math.hypot(dxGap, dyGap);
+        if (o.x < pHit.x + pHit.w + 48 && o.x + o.width > pHit.x - 16) {
+          o.minDist = o.minDist === undefined ? gap : Math.min(o.minDist, gap);
+        }
+        if (o.x + o.width < pHit.x && o.minDist !== undefined && o.minDist < 42) {
+          o.nearMissAwarded = true;
+          player.nearMissCount = (player.nearMissCount || 0) + 1;
+          const pts = player.addScore ? player.addScore(100) : 100;
+          if (!player.addScore) player.score += pts;
+          player.addFever?.(12);
+          player.notifyProgress?.('near_miss', 1);
+          if (window.soundSystem && window.soundSystem.playNearMiss) window.soundSystem.playNearMiss();
+          if (window.particleSystem && window.particleSystem.addFloatingText) {
+            window.particleSystem.addFloatingText(`QUASE! +${pts}`, player.x + player.width * 0.5, player.y - 60, '#38bdf8', 22);
+          }
+        }
       }
 
       if (o.x + o.width < -260) this.obstacles.splice(i, 1);
@@ -411,10 +551,33 @@ class GameWorld {
   }
 
   updateCollectibles(speed, player) {
+    const magnetOn = (player.magnetTimer || 0) > 0;
+    const magnetUpgrade = (window.progressionManager && window.progressionManager.getUpgradeLevel)
+      ? window.progressionManager.getUpgradeLevel('magnet')
+      : 0;
+    const magnetRadius = 270 + magnetUpgrade * 35;
+    const targetX = player.x + player.width * 0.5;
+    const targetY = player.y + player.getCurrentHeight() * 0.5;
+
     for (let i = this.collectibles.length - 1; i >= 0; i--) {
       const c = this.collectibles[i];
       c.x -= speed;
       c.anim = (c.anim || 0) + 0.075;
+
+      // Ímã de Moedas puxa moedas próximas até o skatista
+      if (magnetOn && c.type === 'coin' && !c.collected) {
+        const dx = targetX - c.x;
+        const dy = targetY - c.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 1 && dist < magnetRadius) {
+          const pull = Math.min(dist, 10 + speed * 0.55);
+          c.x += (dx / dist) * pull;
+          c.y += (dy / dist) * pull;
+          if (Math.random() < 0.25 && window.particleSystem && window.particleSystem.emitMagnetPull) {
+            window.particleSystem.emitMagnetPull(c.x, c.y);
+          }
+        }
+      }
 
       if (!c.collected && this.hitsCollectible(player, c)) {
         c.collected = true;
@@ -428,16 +591,24 @@ class GameWorld {
   }
 
   updateAmbient(speed) {
-    const biome = this.getBiome().id;
+    const blend = this.getBiomeBlend();
+    const currId = blend.current.id;
+    const nextId = blend.next.id;
+    const t = blend.t;
+    const metroW = (currId === 'metropolis' ? 1 - t : 0) + (nextId === 'metropolis' ? t : 0);
+    const beachW = (currId === 'beach' ? 1 - t : 0) + (nextId === 'beach' ? t : 0);
+    const cosmicW = (currId === 'cosmic' ? 1 - t : 0) + (nextId === 'cosmic' ? t : 0);
 
-    // Estrelas cadentes ocasionais no bioma cósmico
-    if (biome === 'cosmic') {
-      if (this._meteors.length < 2 && Math.random() < 0.015) {
+    // Estrelas cadentes multicoloridas no bioma cósmico (inclusive durante transição)
+    if (cosmicW > 0.25) {
+      if (this._meteors.length < 3 && Math.random() < 0.022 * cosmicW) {
+        const colors = ['#e9d5ff', '#67e8f9', '#f9a8d4', '#fef08a'];
         this._meteors.push({
           x: 420 + Math.random() * 960,
-          y: 24 + Math.random() * 190,
-          vx: -(12 + Math.random() * 8),
-          vy: 4 + Math.random() * 3.5,
+          y: 22 + Math.random() * 200,
+          vx: -(12 + Math.random() * 9),
+          vy: 3.6 + Math.random() * 3.8,
+          color: colors[Math.floor(Math.random() * colors.length)],
           life: 1
         });
       }
@@ -446,14 +617,14 @@ class GameWorld {
       const m = this._meteors[i];
       m.x += m.vx;
       m.y += m.vy;
-      m.life -= 0.032;
+      m.life -= 0.028;
       if (m.life <= 0) this._meteors.splice(i, 1);
     }
 
     // Pool fixo de partículas climáticas (zero alocação por quadro)
     for (let i = 0; i < this._ambientMotes.length; i++) {
       const m = this._ambientMotes[i];
-      if (biome === 'metropolis') {
+      if (metroW > 0.35 && i < 42) {
         // Chuva fina diagonal na metrópole neon
         m.x -= 5.5 + speed * 0.45;
         m.y += 14 + (i % 5) * 1.4;
@@ -462,10 +633,33 @@ class GameWorld {
           m.x = Math.random() * 1550;
         }
         if (m.x < -40) m.x = 1360 + Math.random() * 140;
+      } else if (metroW > 0.35 && i >= 42) {
+        // Faíscas neon ascendentes na metrópole
+        m.phase += 0.06;
+        m.x -= 1.2 + speed * 0.22 - Math.sin(m.phase) * 0.6;
+        m.y -= 1.1 + (i % 3) * 0.45;
+        if (m.y < 30 || m.x < -30) {
+          m.x = 120 + Math.random() * 1260;
+          m.y = this.groundY - 8 - Math.random() * 80;
+        }
+      } else if (beachW > 0.5) {
+        // Brisa e bolhas tropicais subindo suavemente
+        m.phase += 0.04;
+        m.x += m.vx * 0.85 - speed * 0.14;
+        m.y -= 0.45 + Math.sin(m.phase) * 0.35;
+        if (m.x < -30) {
+          m.x = 1320 + Math.random() * 120;
+          m.y = 70 + Math.random() * (this.groundY - 90);
+        }
+        if (m.y < 24) {
+          m.y = this.groundY - 24;
+          m.x = Math.random() * 1360;
+        }
       } else {
-        m.phase += 0.03;
+        // Poeira dourada (Skatepark) ou poeira estelar cintilante (Cósmica)
+        m.phase += cosmicW > 0.5 ? 0.065 : 0.03;
         m.x += m.vx - speed * 0.16;
-        m.y += m.vy + Math.sin(m.phase) * 0.25;
+        m.y += m.vy + Math.sin(m.phase) * 0.28;
         if (m.x < -30) {
           m.x = 1320 + Math.random() * 120;
           m.y = 40 + Math.random() * (this.groundY - 60);
@@ -495,18 +689,26 @@ class GameWorld {
 
   collect(player, item) {
     if (item.type === 'coin') {
-      player.coins++;
-      player.score += 50;
-      if (window.soundSystem) window.soundSystem.playCoin();
+      const qty = (player.doubleTimer || 0) > 0 ? 2 : 1;
+      player.coins += qty;
+      if (player.addScore) player.addScore(50 * qty);
+      else player.score += 50 * qty;
+      player.notifyProgress?.('coin', qty);
+      window.soundSystem?.playCoin?.();
       if (window.particleSystem) {
         window.particleSystem.emitSparks(item.x, item.y, 10, PALETTE.gold);
         window.particleSystem.emitSparkle(item.x, item.y);
       }
     } else if (item.type === 'turbo') {
-      player.turboTimer = 320;
-      player.turboDuration = 320;
-      player.score += 200;
-      if (window.soundSystem) window.soundSystem.playPowerup();
+      const bonus = (window.progressionManager && window.progressionManager.getUpgradeBonus)
+        ? window.progressionManager.getUpgradeBonus('turbo')
+        : 0;
+      const dur = 320 + bonus;
+      player.turboTimer = Math.max(player.turboTimer || 0, dur);
+      player.turboDuration = Math.max(player.turboDuration || 1, dur);
+      if (player.addScore) player.addScore(200);
+      else player.score += 200;
+      window.soundSystem?.playPowerup?.();
       if (window.particleSystem) {
         window.particleSystem.emitSparks(item.x, item.y, 26, PALETTE.edge);
         if (window.particleSystem.emitShockwave) {
@@ -519,15 +721,81 @@ class GameWorld {
       }
       if (window.game) window.game.flash('power');
     } else if (item.type === 'shield') {
+      const alreadyHadShield = !!player.hasShield;
       player.hasShield = true;
-      player.score += 150;
-      if (window.soundSystem) window.soundSystem.playPowerup();
+      const pts = player.addScore ? player.addScore(150) : 150;
+      if (!player.addScore) player.score += pts;
+      window.soundSystem?.playPowerup?.();
       if (window.particleSystem) {
         window.particleSystem.emitSparks(item.x, item.y, 20, PALETTE.green);
         if (window.particleSystem.emitShockwave) {
           window.particleSystem.emitShockwave(item.x, item.y, PALETTE.green, 74);
         }
-        window.particleSystem.addFloatingText('ESCUDO', item.x, item.y - 24, PALETTE.green, 24);
+        window.particleSystem.addFloatingText(alreadyHadShield ? `ESCUDO EXTRA! +${pts}` : 'ESCUDO', item.x, item.y - 24, PALETTE.green, 24);
+      }
+    } else if (item.type === 'magnet') {
+      const bonus = (window.progressionManager && window.progressionManager.getUpgradeBonus)
+        ? window.progressionManager.getUpgradeBonus('magnet')
+        : 0;
+      const dur = 300 + bonus;
+      player.magnetTimer = Math.max(player.magnetTimer || 0, dur);
+      player.magnetDuration = Math.max(player.magnetDuration || 1, dur);
+      if (player.addScore) player.addScore(150);
+      else player.score += 150;
+      window.soundSystem?.playPowerup?.();
+      if (window.particleSystem) {
+        window.particleSystem.emitSparks(item.x, item.y, 22, '#f43f7e');
+        window.particleSystem.emitShockwave?.(item.x, item.y, '#f43f7e', 80);
+        window.particleSystem.addFloatingText('ÍMÃ DE MOEDAS!', item.x, item.y - 28, '#f43f7e', 24);
+      }
+      if (window.game) window.game.flash('power');
+    } else if (item.type === 'double') {
+      player.doubleTimer = Math.max(player.doubleTimer || 0, 300);
+      player.doubleDuration = Math.max(player.doubleDuration || 1, 300);
+      if (player.addScore) player.addScore(150);
+      else player.score += 150;
+      window.soundSystem?.playPowerup?.();
+      if (window.particleSystem) {
+        window.particleSystem.emitSparks(item.x, item.y, 22, '#fbbf24');
+        window.particleSystem.emitShockwave?.(item.x, item.y, '#fbbf24', 80);
+        window.particleSystem.addFloatingText('MOEDAS & PONTOS 2X!', item.x, item.y - 28, '#fbbf24', 24);
+      }
+      if (window.game) window.game.flash('power');
+    } else if (item.type === 'letter') {
+      const idx = Math.max(0, Math.min(4, item.letterIndex || 0));
+      if (!Array.isArray(player.lettersCollected)) {
+        player.lettersCollected = [false, false, false, false, false];
+      }
+      player.lettersCollected[idx] = true;
+      const pts = player.addScore ? player.addScore(180) : 180;
+      if (!player.addScore) player.score += pts;
+      player.addFever?.(20);
+      if (window.soundSystem && window.soundSystem.playLetter) window.soundSystem.playLetter(idx);
+      else window.soundSystem?.playCoin?.();
+
+      if (player.lettersCollected.every(Boolean)) {
+        player.wordsCompleted = (player.wordsCompleted || 0) + 1;
+        player.coins += 25;
+        if (player.addScore) player.addScore(500);
+        else player.score += 500;
+        player.lettersCollected = [false, false, false, false, false];
+        player.nextLetterIndex = 0;
+        player.notifyProgress?.('word', 1);
+        player.notifyProgress?.('coin', 25);
+        window.soundSystem?.playStageClear?.();
+        if (window.particleSystem) {
+          window.particleSystem.emitConfetti?.(item.x, item.y, 38);
+          window.particleSystem.emitShockwave?.(item.x, item.y, '#fbbf24', 110);
+          window.particleSystem.addFloatingText('LUIGI COMPLETO! +25 🪙', item.x, item.y - 36, '#fbbf24', 24);
+        }
+        player.activateFever?.();
+      } else {
+        const nextIdx = player.lettersCollected.findIndex(v => !v);
+        player.nextLetterIndex = nextIdx >= 0 ? nextIdx : 0;
+        if (window.particleSystem) {
+          window.particleSystem.emitSparks(item.x, item.y, 16, '#fbbf24');
+          window.particleSystem.addFloatingText(`LETRA "${item.letter}"! +${pts}`, item.x, item.y - 26, '#fbbf24', 24);
+        }
       }
     }
   }
@@ -595,14 +863,91 @@ class GameWorld {
     }
   }
 
-  // ---- Bloco plano com obstáculo ----
+  _maybeSpawnBonusPickup(x, y, player) {
+    this._letterCounter = (this._letterCounter || 0) + 1;
+    const letters = ['L', 'U', 'I', 'G', 'I'];
+    if (this._letterCounter % 6 === 0) {
+      const collected = Array.isArray(player.lettersCollected) ? player.lettersCollected : [false, false, false, false, false];
+      const activeIndices = new Set(
+        this.collectibles.filter(c => c.type === 'letter' && !c.collected).map(c => c.letterIndex)
+      );
+      let useIdx = -1;
+      for (let i = 0; i < 5; i++) {
+        if (!collected[i] && !activeIndices.has(i)) {
+          useIdx = i;
+          break;
+        }
+      }
+      if (useIdx < 0) {
+        const idx = collected.findIndex(v => !v);
+        useIdx = idx >= 0 ? idx : (player.nextLetterIndex || 0);
+      }
+      this.collectibles.push({
+        type: 'letter',
+        letter: letters[useIdx % 5],
+        letterIndex: useIdx % 5,
+        x, y,
+        size: 36,
+        collected: false
+      });
+      return;
+    }
+    const r = Math.random();
+    if (r < 0.14) {
+      this.collectibles.push({ type: 'magnet', x, y, size: 38, collected: false });
+    } else if (r < 0.24) {
+      this.collectibles.push({ type: 'double', x, y, size: 38, collected: false });
+    } else if (r < 0.38 && !player.hasShield) {
+      this.collectibles.push({ type: 'shield', x, y, size: 38, collected: false });
+    }
+  }
+
+  // ---- Bloco plano com obstáculo + variação por bioma ----
   chunkFlat(x, player) {
-    const width = 820 + Math.random() * 380;
-    this.platforms.push(this.makePlatform(x, width));
+    const baseWidth = 860 + Math.random() * 360;
+    const platform = this.makePlatform(x, baseWidth);
+    this.platforms.push(platform);
 
-    const obsX = x + 340 + Math.random() * 140;
+    const biomeId = this.getBiome(player.distance).id;
+    const obsX = x + 310 + Math.random() * 130;
+    const roll = Math.random();
+    let obsEndX = obsX + 60;
 
-    if (Math.random() < 0.5) {
+    if (biomeId === 'metropolis' && roll < 0.34) {
+      // Drone neon flutuante na altura de salto ou agachamento
+      this.obstacles.push({
+        type: 'drone',
+        x: obsX,
+        y: this.groundY - 120,
+        baseY: this.groundY - 120,
+        width: 58,
+        height: 44,
+        phase: Math.random() * Math.PI * 2,
+        damageReason: 'Bateu no drone neon',
+        hit: false
+      });
+      obsEndX = obsX + 58;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 29, y: this.groundY - 40, size: 26, collected: false });
+      }
+    } else if (biomeId === 'beach' && roll < 0.34) {
+      // Barril rolante no píer da praia
+      this.obstacles.push({
+        type: 'barrel',
+        x: obsX + 90,
+        y: this.groundY - 52,
+        width: 50,
+        height: 52,
+        rollSpeed: 1.4,
+        rot: 0,
+        damageReason: 'Tropeçou no barril',
+        hit: false
+      });
+      obsEndX = obsX + 140;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 60, y: this.groundY - 128, size: 28, collected: false });
+      }
+    } else if (roll < 0.55) {
       this.obstacles.push({
         type: 'crate',
         x: obsX, y: this.groundY - 58,
@@ -610,7 +955,10 @@ class GameWorld {
         damageReason: 'Bateu na caixa',
         hit: false
       });
-      this.collectibles.push({ type: 'coin', x: obsX + 27, y: this.groundY - 124, size: 28, collected: false });
+      obsEndX = obsX + 54;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 27, y: this.groundY - 124, size: 28, collected: false });
+      }
     } else {
       this.obstacles.push({
         type: 'sign',
@@ -619,27 +967,60 @@ class GameWorld {
         damageReason: 'Bateu na placa',
         hit: false
       });
-      for (let i = 0; i < 3; i++) {
+      obsEndX = obsX + 78;
+      for (let i = 0; i < 2; i++) {
         this.collectibles.push({
-          type: 'coin', x: obsX + 16 + i * 34, y: this.groundY - 44, size: 24, collected: false
+          type: 'coin', x: obsX + 14 + i * 46, y: this.groundY - 44, size: 24, collected: false
         });
       }
     }
 
-    if (Math.random() < 0.22 && !player.hasShield) {
-      this.collectibles.push({ type: 'shield', x: x + width - 220, y: this.groundY - 62, size: 38, collected: false });
+    // Trampolim elástico ou Speed Pad com margem segura (>= 205px) após o obstáculo
+    const padRoll = Math.random();
+    if (padRoll < 0.28) {
+      const padX = Math.max(obsEndX + 210, x + baseWidth - 320);
+      this.pads.push({ type: 'bounce', x: padX, y: this.groundY, width: 76, height: 14, used: false, anim: 0 });
+
+      if (Math.random() < 0.56) {
+        // Combo Trampolim -> Caminho Alto com trilha de moedas e bônus
+        const epX = padX + 150;
+        const epW = 248;
+        const epY = this.groundY - 150;
+        platform.width = Math.max(platform.width, (epX - x) + epW + 220);
+        this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
+        this.collectibles.push(
+          { type: 'coin', x: padX + 66, y: this.groundY - 148, size: 26, collected: false },
+          { type: 'coin', x: padX + 114, y: this.groundY - 196, size: 26, collected: false }
+        );
+        for (let i = 0; i < 3; i++) {
+          this.collectibles.push({
+            type: 'coin', x: epX + 44 + i * 78, y: epY - 34, size: 26, collected: false
+          });
+        }
+        this._maybeSpawnBonusPickup(epX + epW * 0.5, epY - 76, player);
+      } else {
+        platform.width = Math.max(platform.width, (padX - x) + 330);
+        this.spawnJumpArc(padX + 20, this.groundY - 165, 3, 220, player.speed);
+      }
+    } else if (padRoll < 0.46) {
+      const padX = Math.max(obsEndX + 205, x + baseWidth - 260);
+      platform.width = Math.max(platform.width, (padX - x) + 290);
+      this.pads.push({ type: 'speed', x: padX, y: this.groundY, width: 92, height: 10, used: false, anim: 0 });
+      this._maybeSpawnBonusPickup(padX + 128, this.groundY - 72, player);
+    } else {
+      this._maybeSpawnBonusPickup(Math.max(obsEndX + 190, x + baseWidth - 210), this.groundY - 64, player);
     }
   }
 
-  // ---- Bloco com corrimão de grind (seguro e bem espaçado) ----
+  // ---- Bloco com corrimão de grind + Caminho Alto opcional ----
   chunkRail(x, player) {
     const railWidth = Math.round(250 + Math.random() * 130);
-    const width = railWidth + 580 + Math.random() * 160;
+    const width = railWidth + 620 + Math.random() * 160;
     this.platforms.push(this.makePlatform(x, width));
 
-    const railX = x + 260;
+    const railX = x + 250;
     const railY = this.groundY - 68;
-    const surfaceType = this.getBiome().id === 'beach' ? 'wood' : 'metal';
+    const surfaceType = this.getBiome(player.distance).id === 'beach' ? 'wood' : 'metal';
 
     this.rails.push({
       x: railX,
@@ -651,7 +1032,7 @@ class GameWorld {
     });
 
     // Trilha de moedas sobre o corrimão convidando para o grind
-    const coinCount = Math.max(4, Math.floor(railWidth / 64));
+    const coinCount = Math.max(3, Math.floor(railWidth / 95));
     for (let i = 0; i < coinCount; i++) {
       const t = coinCount === 1 ? 0.5 : i / (coinCount - 1);
       this.collectibles.push({
@@ -663,23 +1044,40 @@ class GameWorld {
       });
     }
 
-    if (Math.random() < 0.25 && !player.hasShield) {
-      this.collectibles.push({
-        type: 'shield',
-        x: railX + railWidth + 140,
-        y: this.groundY - 64,
-        size: 38,
-        collected: false
-      });
+    // Caminho Alto (telhado / plataforma elevada one-way) com moedas extras!
+    if (Math.random() < 0.58) {
+      const epX = railX + railWidth + 55;
+      const epW = 240;
+      const epY = this.groundY - 134;
+      this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
+      for (let i = 0; i < 3; i++) {
+        this.collectibles.push({
+          type: 'coin',
+          x: epX + 45 + i * 74,
+          y: epY - 34,
+          size: 26,
+          collected: false
+        });
+      }
+      this._maybeSpawnBonusPickup(epX + epW * 0.5, epY - 76, player);
+    } else {
+      if (Math.random() < 0.35) {
+        const padX = railX + railWidth + 140;
+        this.pads.push({ type: 'speed', x: padX, y: this.groundY, width: 92, height: 10, used: false, anim: 0 });
+        this._maybeSpawnBonusPickup(padX + 125, this.groundY - 70, player);
+      } else {
+        this._maybeSpawnBonusPickup(railX + railWidth + 140, this.groundY - 64, player);
+      }
     }
   }
 
-  // ---- Bloco com rampa de mega salto ----
+  // ---- Bloco com rampa de mega salto + combo de rota alta opcional ----
   chunkRamp(x, player) {
     const rampW = 176;
     const rampH = 66;
-    const width = 920 + Math.random() * 280;
-    this.platforms.push(this.makePlatform(x, width));
+    const baseWidth = 920 + Math.random() * 260;
+    const platform = this.makePlatform(x, baseWidth);
+    this.platforms.push(platform);
 
     const rampX = x + 280;
     this.ramps.push({
@@ -694,12 +1092,43 @@ class GameWorld {
 
     // Arco de moedas saindo exatamente do lip (topo) da rampa
     const lipX = rampX + rampW;
-    this.spawnJumpArc(lipX + 24, this.groundY - 165, 7, 340, player.speed);
+    this.spawnJumpArc(lipX + 24, this.groundY - 165, 4, 340, player.speed);
 
     if (Math.random() < 0.45) {
       this.collectibles.push({
         type: 'turbo', x: lipX + 250, y: this.groundY - 315, size: 40, collected: false
       });
+    } else {
+      this._maybeSpawnBonusPickup(lipX + 240, this.groundY - 280, player);
+    }
+
+    // Combo opcional após a rampa: aterrissar no Caminho Alto ou emendar num Corrimão
+    const followRoll = Math.random();
+    if (followRoll < 0.30) {
+      const epX = lipX + 360;
+      const epW = 240;
+      const epY = this.groundY - 140;
+      platform.width = Math.max(platform.width, (epX - x) + epW + 240);
+      this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
+      for (let i = 0; i < 3; i++) {
+        this.collectibles.push({
+          type: 'coin', x: epX + 42 + i * 76, y: epY - 34, size: 26, collected: false
+        });
+      }
+    } else if (followRoll < 0.50) {
+      const railX = lipX + 380;
+      const railW = 225;
+      const railY = this.groundY - 68;
+      const surfaceType = this.getBiome(player.distance).id === 'beach' ? 'wood' : 'metal';
+      platform.width = Math.max(platform.width, (railX - x) + railW + 240);
+      this.rails.push({
+        x: railX, y: railY, width: railW, height: 14, surfaceType, glowPhase: Math.random() * Math.PI * 2
+      });
+      for (let i = 0; i < 3; i++) {
+        this.collectibles.push({
+          type: 'coin', x: railX + 34 + i * 78, y: railY - 36, size: 26, collected: false
+        });
+      }
     }
   }
 
@@ -709,7 +1138,7 @@ class GameWorld {
     const landing = TRACK.MIN_LANDING + Math.random() * 260;
 
     this.platforms.push(this.makePlatform(x + gap, landing));
-    this.spawnJumpArc(x + 20, this.groundY - 110, 5, gap + 40, player.speed);
+    this.spawnJumpArc(x + 20, this.groundY - 110, 3, gap + 40, player.speed);
   }
 
   // ---- Bloco com pista quebradiça ----
@@ -724,7 +1153,7 @@ class GameWorld {
     this.platforms.push(this.makePlatform(x + runway, breakWidth, { breakable: true, speed: player.speed }));
     this.platforms.push(this.makePlatform(x + runway + breakWidth, TRACK.MIN_LANDING + Math.random() * 220));
 
-    this.spawnJumpArc(x + runway + 30, this.groundY - 120, 5, breakWidth - 40, player.speed);
+    this.spawnJumpArc(x + runway + 30, this.groundY - 120, 3, breakWidth - 40, player.speed);
   }
 
   /** Distribui moedas ao longo de uma parábola de salto. */
@@ -842,7 +1271,19 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
-    // Colinas distantes suaves
+    // Plano distante de colinas ao pôr do sol
+    ctx.fillStyle = '#2d1e4a';
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = 0; x <= w; x += 28) {
+      const hill = Math.sin(x * 0.004 + 0.8) * 52 + Math.sin(x * 0.009) * 20;
+      ctx.lineTo(x, h - 160 - hill);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Colinas intermediárias suaves
     ctx.fillStyle = '#241a3f';
     ctx.beginPath();
     ctx.moveTo(0, h);
@@ -863,8 +1304,14 @@ class GameWorld {
       ctx.fillStyle = '#1b1433';
       ctx.fillRect(x, by, bw, bh);
 
-      // Luz de pôr do sol na borda esquerda dos prédios
-      ctx.fillStyle = 'rgba(251, 146, 60, 0.16)';
+      // Pequeno detalhe de topo (caixa d'água / antena)
+      if (Math.random() < 0.35) {
+        ctx.fillRect(x + bw * 0.28, by - 12, bw * 0.28, 12);
+        ctx.fillRect(x + bw * 0.7, by - 22, 2, 22);
+      }
+
+      // Luz de pôr do sol na borda voltada ao astro
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.20)';
       ctx.fillRect(x + bw - 3, by, 3, bh);
 
       // Janelas douradas quentes
@@ -872,7 +1319,7 @@ class GameWorld {
         for (let wx = x + 8; wx < x + bw - 8; wx += 12) {
           if (Math.random() < 0.56) continue;
           ctx.fillStyle = Math.random() < 0.85
-            ? 'rgba(254, 215, 130, 0.30)'
+            ? 'rgba(254, 215, 130, 0.32)'
             : 'rgba(125, 211, 252, 0.22)';
           ctx.fillRect(wx, wy, 4, 6);
         }
@@ -885,13 +1332,15 @@ class GameWorld {
   renderSkateparkMid(w, h) {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
+    const poleAnchors = [];
 
     let x = 0;
     while (x < w) {
-      if (Math.random() < 0.36) {
+      const pick = Math.random();
+      if (pick < 0.34) {
         // Silhueta de half-pipe / bowl de skatepark ao fundo
-        const sw = 180;
-        const sh = 76;
+        const sw = 186;
+        const sh = 82;
         const by = h - sh;
         ctx.fillStyle = '#110d24';
         ctx.beginPath();
@@ -903,20 +1352,65 @@ class GameWorld {
         ctx.closePath();
         ctx.fill();
 
+        // Coping iluminado no half-pipe
+        ctx.strokeStyle = 'rgba(253, 186, 116, 0.42)';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(x, by);
+        ctx.quadraticCurveTo(x + sw * 0.25, h - 18, x + sw * 0.5, h - 18);
+        ctx.quadraticCurveTo(x + sw * 0.75, h - 18, x + sw, by);
+        ctx.stroke();
+
         // Refletor do skatepark
+        const px = x + 14;
+        const py = by - 122;
+        poleAnchors.push([px, py + 24]);
         ctx.strokeStyle = '#0d0a1c';
         ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(x + 14, by);
-        ctx.lineTo(x + 14, by - 120);
+        ctx.moveTo(px, by);
+        ctx.lineTo(px, py);
         ctx.stroke();
-        const beam = ctx.createRadialGradient(x + 14, by - 120, 2, x + 14, by - 120, 48);
-        beam.addColorStop(0, 'rgba(255, 240, 200, 0.55)');
+        ctx.fillStyle = '#1e1638';
+        ctx.fillRect(px - 10, py - 4, 22, 6);
+        const beam = ctx.createRadialGradient(px, py, 2, px, py, 52);
+        beam.addColorStop(0, 'rgba(255, 240, 200, 0.58)');
         beam.addColorStop(1, 'rgba(255, 220, 150, 0)');
         ctx.fillStyle = beam;
-        ctx.fillRect(x - 34, by - 168, 96, 96);
+        ctx.fillRect(px - 52, py - 52, 104, 104);
 
         x += sw + 18;
+      } else if (pick < 0.58) {
+        // Funbox + muro grafitado de skatepark
+        const fw = 160;
+        const fh = 68;
+        const by = h - fh;
+        ctx.fillStyle = '#130e29';
+        ctx.fillRect(x, by, fw, fh);
+
+        // Arte urbana discreta em tons quentes/ciano
+        const splashes = [
+          [x + 28, by + 30, 16, 'rgba(244, 63, 126, 0.30)'],
+          [x + 68, by + 26, 20, 'rgba(34, 211, 238, 0.28)'],
+          [x + 114, by + 34, 17, 'rgba(251, 191, 36, 0.30)']
+        ];
+        for (const [sx, sy, sr, col] of splashes) {
+          ctx.fillStyle = col;
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(253, 186, 116, 0.24)';
+        ctx.fillRect(x, by, fw, 3);
+        poleAnchors.push([x + fw * 0.5, by - 58]);
+        ctx.strokeStyle = '#0d0a1c';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x + fw * 0.5, by);
+        ctx.lineTo(x + fw * 0.5, by - 62);
+        ctx.stroke();
+
+        x += fw + 14;
       } else {
         const bw = 72 + Math.random() * 98;
         const bh = 125 + Math.random() * 175;
@@ -925,7 +1419,7 @@ class GameWorld {
         ctx.fillRect(x, by, bw, bh);
 
         // Borda iluminada pelo sol poente
-        ctx.fillStyle = 'rgba(251, 146, 60, 0.14)';
+        ctx.fillStyle = 'rgba(251, 146, 60, 0.16)';
         ctx.fillRect(x + bw - 3, by, 3, bh);
 
         for (let wy = by + 16; wy < h - 14; wy += 20) {
@@ -938,6 +1432,40 @@ class GameWorld {
         x += bw + 10;
       }
     }
+
+    // Bandeirolas triangulares de campeonato esticadas entre postes do skatepark
+    const flagColors = ['#fbbf24', '#f43f7e', '#22d3ee', '#34d399'];
+    for (let i = 0; i < poleAnchors.length - 1; i++) {
+      const [x1, y1] = poleAnchors[i];
+      const [x2, y2] = poleAnchors[i + 1];
+      if (x2 - x1 > 460) continue;
+      const mx = (x1 + x2) * 0.5;
+      const my = Math.max(y1, y2) + 28;
+      ctx.strokeStyle = 'rgba(255, 237, 213, 0.25)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.quadraticCurveTo(mx, my, x2, y2);
+      ctx.stroke();
+
+      const steps = 7;
+      for (let s = 1; s < steps; s++) {
+        const u = s / steps;
+        const inv = 1 - u;
+        const fx = inv * inv * x1 + 2 * inv * u * mx + u * u * x2;
+        const fy = inv * inv * y1 + 2 * inv * u * my + u * u * y2;
+        ctx.fillStyle = flagColors[s % flagColors.length];
+        ctx.globalAlpha = 0.65;
+        ctx.beginPath();
+        ctx.moveTo(fx - 5, fy);
+        ctx.lineTo(fx + 5, fy);
+        ctx.lineTo(fx, fy + 11);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     return c;
   }
 
@@ -948,6 +1476,18 @@ class GameWorld {
 
     // Palmeira detalhada
     this._drawPalmSilhouette(ctx, 100, h, 205, ink, 'rgba(251, 146, 60, 0.28)');
+
+    // Mureta/banco de skatepark com adesivos coloridos
+    ctx.fillStyle = '#120e24';
+    ctx.fillRect(225, h - 38, 118, 38);
+    ctx.fillStyle = 'rgba(253, 186, 116, 0.35)';
+    ctx.fillRect(225, h - 38, 118, 3);
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.55)';
+    ctx.fillRect(242, h - 24, 18, 8);
+    ctx.fillStyle = 'rgba(244, 63, 126, 0.55)';
+    ctx.fillRect(272, h - 26, 14, 10);
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.60)';
+    ctx.fillRect(298, h - 22, 20, 7);
 
     // Poste de luz quente
     this._drawStreetLamp(ctx, 410, h, 224, ink, '255, 224, 160');
@@ -976,6 +1516,13 @@ class GameWorld {
     ctx.lineTo(790, h - 82);
     ctx.stroke();
 
+    // Faixa de evento no alambrado
+    ctx.fillStyle = 'rgba(244, 63, 126, 0.32)';
+    ctx.fillRect(574, h - 62, 192, 20);
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(574, h - 62, 192, 20);
+
     return c;
   }
 
@@ -985,8 +1532,9 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
     const body = far ? '#0d0924' : '#070516';
-    const winA = far ? 'rgba(56, 189, 248, 0.24)' : 'rgba(56, 189, 248, 0.44)';
-    const winB = far ? 'rgba(244, 63, 126, 0.24)' : 'rgba(244, 63, 126, 0.44)';
+    const winA = far ? 'rgba(56, 189, 248, 0.24)' : 'rgba(56, 189, 248, 0.46)';
+    const winB = far ? 'rgba(244, 63, 126, 0.24)' : 'rgba(244, 63, 126, 0.46)';
+    const winC = far ? 'rgba(168, 85, 247, 0.22)' : 'rgba(192, 132, 252, 0.40)';
 
     let x = 0;
     while (x < w) {
@@ -997,21 +1545,21 @@ class GameWorld {
       ctx.fillStyle = body;
       ctx.fillRect(x, by, bw, bh);
 
-      // Topo em degrau + antena com luz vermelha/rosa
-      if (Math.random() < 0.45) {
+      // Topo em degrau + antena dupla com luz vermelha/rosa
+      if (Math.random() < 0.48) {
         const tw = bw * 0.46;
         ctx.fillRect(x + (bw - tw) * 0.5, by - 28, tw, 28);
-        ctx.fillRect(x + bw * 0.5 - 1, by - 68, 2, 40);
-        ctx.fillStyle = 'rgba(244, 63, 126, 0.85)';
-        ctx.fillRect(x + bw * 0.5 - 2.5, by - 71, 5, 5);
+        ctx.fillRect(x + bw * 0.5 - 1, by - 72, 2, 44);
+        ctx.fillStyle = 'rgba(244, 63, 126, 0.90)';
+        ctx.fillRect(x + bw * 0.5 - 2.5, by - 75, 5, 5);
         ctx.fillStyle = body;
       }
 
       // Feixes verticais de luz neon nos prédios altos
-      if (Math.random() < 0.35) {
+      if (Math.random() < 0.40) {
         const stripHue = Math.random() < 0.5 ? '34, 211, 238' : '244, 63, 126';
-        ctx.fillStyle = `rgba(${stripHue}, ${far ? 0.35 : 0.65})`;
-        ctx.fillRect(x + 3, by + 6, 2, bh - 12);
+        ctx.fillStyle = `rgba(${stripHue}, ${far ? 0.36 : 0.68})`;
+        ctx.fillRect(x + 3, by + 6, 2.5, bh - 12);
       }
 
       // Janelas
@@ -1021,22 +1569,22 @@ class GameWorld {
         for (let wx = x + 8; wx < x + bw - 9; wx += stepX) {
           const roll = Math.random();
           if (roll < 0.44) continue;
-          ctx.fillStyle = roll > 0.72 ? winB : winA;
+          ctx.fillStyle = roll > 0.78 ? winB : roll > 0.64 ? winC : winA;
           ctx.fillRect(wx, wy, far ? 4 : 6, far ? 6 : 8);
         }
       }
 
-      // Letreiros holográficos neon na camada média
-      if (!far && Math.random() < 0.42) {
+      // Letreiros holográficos neon na camada média (horizontais e verticais)
+      if (!far && Math.random() < 0.48) {
         const sy = by + 34 + Math.random() * 90;
         const sw = bw * 0.55;
         const hue = Math.random() < 0.5 ? '244, 63, 126' : '34, 211, 238';
-        const g = ctx.createRadialGradient(x + bw * 0.5, sy + 6, 2, x + bw * 0.5, sy + 6, 44);
-        g.addColorStop(0, `rgba(${hue}, 0.52)`);
+        const g = ctx.createRadialGradient(x + bw * 0.5, sy + 6, 2, x + bw * 0.5, sy + 6, 46);
+        g.addColorStop(0, `rgba(${hue}, 0.55)`);
         g.addColorStop(1, `rgba(${hue}, 0)`);
         ctx.fillStyle = g;
-        ctx.fillRect(x + bw * 0.5 - 44, sy - 38, 88, 88);
-        ctx.fillStyle = `rgba(${hue}, 0.92)`;
+        ctx.fillRect(x + bw * 0.5 - 46, sy - 40, 92, 92);
+        ctx.fillStyle = `rgba(${hue}, 0.94)`;
         ctx.fillRect(x + (bw - sw) * 0.5, sy, sw, 5);
         ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
         ctx.fillRect(x + (bw - sw) * 0.5 + 4, sy + 1, sw - 8, 2);
@@ -1046,12 +1594,17 @@ class GameWorld {
       x += bw + (far ? 4 : 8);
     }
 
-    // Linha de monotrilho/viaduto ao fundo na camada média
+    // Linha de monotrilho/viaduto com pilares na camada média
     if (!far) {
       ctx.fillStyle = '#050311';
-      ctx.fillRect(0, h - 54, w, 12);
-      ctx.fillStyle = 'rgba(34, 211, 238, 0.35)';
-      ctx.fillRect(0, h - 54, w, 2);
+      for (let px = 90; px < w; px += 220) {
+        ctx.fillRect(px, h - 42, 16, 42);
+      }
+      ctx.fillRect(0, h - 54, w, 13);
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.45)';
+      ctx.fillRect(0, h - 54, w, 2.5);
+      ctx.fillStyle = 'rgba(244, 63, 126, 0.30)';
+      ctx.fillRect(0, h - 43, w, 1.5);
     }
     return c;
   }
@@ -1067,15 +1620,44 @@ class GameWorld {
     // Poste cyberpunk magenta
     this._drawStreetLamp(ctx, 560, h, 234, ink, '244, 63, 126');
 
-    // Painel neon de rua
+    // Painel neon de rua enriquecido (moldura dupla + barras + ícone de raio)
     ctx.fillStyle = ink;
-    ctx.fillRect(360, h - 108, 72, 108);
-    ctx.strokeStyle = 'rgba(244, 63, 126, 0.75)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(368, h - 98, 56, 48);
-    ctx.fillStyle = 'rgba(34, 211, 238, 0.65)';
-    ctx.fillRect(376, h - 86, 40, 5);
-    ctx.fillRect(376, h - 74, 28, 4);
+    ctx.fillRect(354, h - 118, 84, 118);
+    const panelGlow = ctx.createRadialGradient(396, h - 78, 6, 396, h - 78, 54);
+    panelGlow.addColorStop(0, 'rgba(244, 63, 126, 0.28)');
+    panelGlow.addColorStop(1, 'rgba(244, 63, 126, 0)');
+    ctx.fillStyle = panelGlow;
+    ctx.fillRect(342, h - 132, 108, 108);
+
+    ctx.strokeStyle = 'rgba(244, 63, 126, 0.82)';
+    ctx.lineWidth = 2.2;
+    ctx.strokeRect(362, h - 108, 68, 56);
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(366, h - 104, 60, 48);
+
+    // Barras holográficas + raio estilizado
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.78)';
+    ctx.fillRect(374, h - 94, 34, 5);
+    ctx.fillRect(374, h - 83, 24, 4);
+    ctx.fillStyle = 'rgba(251, 191, 36, 0.85)';
+    ctx.beginPath();
+    ctx.moveTo(416, h - 96);
+    ctx.lineTo(408, h - 78);
+    ctx.lineTo(415, h - 78);
+    ctx.lineTo(410, h - 62);
+    ctx.lineTo(421, h - 82);
+    ctx.lineTo(414, h - 82);
+    ctx.closePath();
+    ctx.fill();
+
+    // Totem de sinalização neon discreto à direita
+    ctx.fillStyle = ink;
+    ctx.fillRect(706, h - 66, 22, 66);
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.72)';
+    ctx.fillRect(712, h - 56, 10, 4);
+    ctx.fillStyle = 'rgba(244, 63, 126, 0.72)';
+    ctx.fillRect(712, h - 46, 10, 4);
 
     return c;
   }
@@ -1086,8 +1668,20 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
-    // Ilhas e morros costeiros em tons tropicais suaves
-    ctx.fillStyle = 'rgba(14, 116, 144, 0.55)';
+    // Ilhas distantes mais suaves ao fundo
+    ctx.fillStyle = 'rgba(14, 116, 144, 0.34)';
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    for (let x = 0; x <= w; x += 30) {
+      const y = h - 82 - Math.max(0, Math.sin(x * 0.0038 + 2.2) * 52 + Math.sin(x * 0.01) * 16);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Ilhas e morros costeiros em tons tropicais
+    ctx.fillStyle = 'rgba(14, 116, 144, 0.62)';
     ctx.beginPath();
     ctx.moveTo(0, h);
     for (let x = 0; x <= w; x += 30) {
@@ -1098,20 +1692,56 @@ class GameWorld {
     ctx.closePath();
     ctx.fill();
 
+    // Veleiros coloridos distantes no horizonte
+    const boats = [[w * 0.22, h - 68, '#f43f7e'], [w * 0.84, h - 64, '#fbbf24']];
+    for (const [bx, by, sailColor] of boats) {
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.moveTo(bx - 12, by);
+      ctx.lineTo(bx + 12, by);
+      ctx.lineTo(bx + 8, by + 5);
+      ctx.lineTo(bx - 9, by + 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = sailColor;
+      ctx.beginPath();
+      ctx.moveTo(bx - 1, by - 22);
+      ctx.lineTo(bx + 11, by - 2);
+      ctx.lineTo(bx - 1, by - 2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.beginPath();
+      ctx.moveTo(bx - 2, by - 18);
+      ctx.lineTo(bx - 10, by - 2);
+      ctx.lineTo(bx - 2, by - 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+
     // Farol costeiro distante
     const lx = w * 0.64;
-    const ly = h - 115;
+    const ly = h - 118;
     ctx.fillStyle = '#f8fafc';
     ctx.beginPath();
-    ctx.moveTo(lx - 8, ly + 42);
+    ctx.moveTo(lx - 9, ly + 46);
     ctx.lineTo(lx - 5, ly);
     ctx.lineTo(lx + 5, ly);
-    ctx.lineTo(lx + 8, ly + 42);
+    ctx.lineTo(lx + 9, ly + 46);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = '#ef4444';
-    ctx.fillRect(lx - 6, ly + 10, 12, 8);
-    ctx.fillRect(lx - 7, ly + 26, 14, 8);
+    ctx.fillRect(lx - 6.5, ly + 11, 13, 8);
+    ctx.fillRect(lx - 7.5, ly + 27, 15, 8);
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.moveTo(lx - 7, ly - 5);
+    ctx.lineTo(lx, ly - 13);
+    ctx.lineTo(lx + 7, ly - 5);
+    ctx.closePath();
+    ctx.fill();
     ctx.fillStyle = '#fef08a';
     ctx.beginPath();
     ctx.arc(lx, ly - 3, 5, 0, Math.PI * 2);
@@ -1125,18 +1755,23 @@ class GameWorld {
     const ctx = c.getContext('2d');
 
     const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, '#0284c7');
-    grad.addColorStop(0.45, '#0369a1');
+    grad.addColorStop(0, '#0ea5e9');
+    grad.addColorStop(0.32, '#0284c7');
+    grad.addColorStop(0.72, '#0369a1');
     grad.addColorStop(1, '#0c4a6e');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
+    // Linha suave do horizonte brilhante
+    ctx.fillStyle = 'rgba(254, 249, 195, 0.35)';
+    ctx.fillRect(0, 0, w, 2);
+
     // Linhas horizontais de ondas e brilho solar
-    for (let i = 0; i < 42; i++) {
+    for (let i = 0; i < 48; i++) {
       const wx = Math.random() * w;
       const wy = 10 + Math.random() * (h - 24);
       const ww = 28 + Math.random() * 76;
-      ctx.fillStyle = i % 3 === 0 ? 'rgba(254, 249, 195, 0.35)' : 'rgba(186, 230, 253, 0.28)';
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(254, 249, 195, 0.36)' : 'rgba(186, 230, 253, 0.30)';
       ctx.fillRect(wx, wy, ww, 2.2);
     }
     return c;
@@ -1146,11 +1781,59 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
-    // Coqueiro tropical exuberante
+    // Coqueiros tropicais exuberantes com cocos
     this._drawPalmSilhouette(ctx, 130, h, 224, '#14532d', 'rgba(254, 240, 138, 0.35)', '#78350f');
     this._drawPalmSilhouette(ctx, 640, h, 186, '#166534', 'rgba(254, 240, 138, 0.32)', '#78350f');
+    ctx.fillStyle = '#451a03';
+    for (const [cx, cy] of [[96, h - 216], [104, h - 214], [606, h - 178]]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
-    // Postes de madeira do píer com corda náutica e lanterna
+    // Guarda-sol listrado + prancha de surf fincada ao lado do píer
+    const ux = 224;
+    const uy = h - 98;
+    ctx.strokeStyle = '#92400e';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(ux, h);
+    ctx.lineTo(ux - 8, uy);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.translate(ux - 8, uy);
+    ctx.rotate(-0.12);
+    ctx.fillStyle = '#f43f7e';
+    ctx.beginPath();
+    ctx.arc(0, 6, 44, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fef9c3';
+    ctx.beginPath();
+    ctx.moveTo(0, -38);
+    ctx.lineTo(-16, 6);
+    ctx.lineTo(16, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Prancha de surf colorida inclinada
+    ctx.save();
+    ctx.translate(736, h - 42);
+    ctx.rotate(0.18);
+    ctx.fillStyle = '#22d3ee';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 11, 44, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(-2.5, -36, 5, 72);
+    ctx.strokeStyle = '#0e7490';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    ctx.restore();
+
+    // Postes de madeira do píer com corda náutica, boia e lanterna
     const posts = [320, 440, 560];
     ctx.strokeStyle = '#78350f';
     ctx.lineWidth = 3;
@@ -1163,15 +1846,32 @@ class GameWorld {
     for (const px of posts) {
       ctx.fillStyle = '#451a03';
       ctx.fillRect(px - 7, h - 84, 14, 84);
-      ctx.fillStyle = 'rgba(254, 240, 138, 0.22)';
+      ctx.fillStyle = 'rgba(254, 240, 138, 0.24)';
       ctx.fillRect(px - 7, h - 84, 4, 84);
       // Lanterna no topo do poste do meio
       if (px === 440) {
-        const g = ctx.createRadialGradient(px, h - 94, 2, px, h - 94, 28);
+        ctx.fillStyle = '#fef08a';
+        ctx.fillRect(px - 5, h - 98, 10, 12);
+        const g = ctx.createRadialGradient(px, h - 94, 2, px, h - 94, 30);
         g.addColorStop(0, 'rgba(254, 240, 138, 0.85)');
         g.addColorStop(1, 'rgba(254, 240, 138, 0)');
         ctx.fillStyle = g;
-        ctx.fillRect(px - 28, h - 122, 56, 56);
+        ctx.fillRect(px - 30, h - 124, 60, 60);
+      }
+      // Boia salva-vidas vermelha/branca pendurada no poste da direita
+      if (px === 560) {
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(px + 2, h - 52, 13, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 5;
+        for (let a = 0; a < 4; a++) {
+          ctx.beginPath();
+          ctx.arc(px + 2, h - 52, 13, a * Math.PI * 0.5 - 0.22, a * Math.PI * 0.5 + 0.22);
+          ctx.stroke();
+        }
       }
     }
 
@@ -1184,11 +1884,30 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
+    // Planetas menores distantes para profundidade galáctica
+    const miniPlanets = [
+      [w * 0.22, h - 225, 24, '#38bdf8', '#1d4ed8'],
+      [w * 0.72, h - 245, 16, '#f472b6', '#7e22ce']
+    ];
+    for (const [px, py, pr, c1, c2] of miniPlanets) {
+      const pg = ctx.createRadialGradient(px - pr * 0.35, py - pr * 0.35, 2, px, py, pr);
+      pg.addColorStop(0, c1);
+      pg.addColorStop(1, c2);
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    // Cordilheira lunar/espacial suave com cristas luminosas
     ctx.fillStyle = '#14082e';
     ctx.beginPath();
     ctx.moveTo(0, h);
-    for (let x = 0; x <= w; x += 65) {
-      const peak = 45 + ((x * 37) % 95);
+    for (let x = 0; x <= w; x += 50) {
+      const peak = 52 + Math.abs(Math.sin(x * 0.008) * 58) + ((x * 29) % 44);
       ctx.lineTo(x, h - peak);
     }
     ctx.lineTo(w, h);
@@ -1196,7 +1915,7 @@ class GameWorld {
     ctx.fill();
 
     // Brilho violeta nas cristas
-    ctx.strokeStyle = 'rgba(192, 132, 252, 0.28)';
+    ctx.strokeStyle = 'rgba(192, 132, 252, 0.34)';
     ctx.lineWidth = 2;
     ctx.stroke();
     return c;
@@ -1206,19 +1925,52 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
-    // Arcos energéticos e cristais orbitais
+    // Portais/arcos energéticos + rochas flutuantes com cristais
     for (let x = 140; x < w; x += 320) {
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.35)';
-      ctx.lineWidth = 4;
+      const glow = ctx.createRadialGradient(x, h - 20, 12, x, h - 20, 125);
+      glow.addColorStop(0, 'rgba(168, 85, 247, 0.22)');
+      glow.addColorStop(1, 'rgba(168, 85, 247, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 125, h - 145, 250, 145);
+
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.42)';
+      ctx.lineWidth = 4.5;
       ctx.beginPath();
-      ctx.arc(x, h, 110, Math.PI, 0);
+      ctx.arc(x, h, 112, Math.PI, 0);
       ctx.stroke();
 
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.38)';
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
       ctx.arc(x, h, 96, Math.PI, 0);
       ctx.stroke();
+
+      // Ilha/rocha flutuante entre os arcos
+      const rx = x + 160;
+      const ry = h - 165 - ((x % 3) * 18);
+      if (rx < w - 30) {
+        ctx.fillStyle = '#1e1042';
+        ctx.beginPath();
+        ctx.moveTo(rx - 28, ry);
+        ctx.lineTo(rx + 28, ry);
+        ctx.lineTo(rx + 16, ry + 20);
+        ctx.lineTo(rx - 4, ry + 28);
+        ctx.lineTo(rx - 22, ry + 14);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.42)';
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+
+        // Cristal no topo da rocha flutuante
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.65)';
+        ctx.beginPath();
+        ctx.moveTo(rx, ry - 22);
+        ctx.lineTo(rx + 7, ry);
+        ctx.lineTo(rx - 7, ry);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
     return c;
   }
@@ -1227,25 +1979,61 @@ class GameWorld {
     const c = this.makeCanvas(w, h);
     const ctx = c.getContext('2d');
 
-    // Cristais energéticos translúcidos
-    const crystals = [[140, 125, 26], [420, 160, 32], [690, 110, 22]];
-    for (const [cx, ch, cw] of crystals) {
+    // Grupos de cristais energéticos translúcidos com brilho interno
+    const crystals = [
+      [140, 130, 28, '#22d3ee'],
+      [420, 165, 34, '#e879f9'],
+      [690, 118, 24, '#38bdf8']
+    ];
+    for (const [cx, ch, cw, rim] of crystals) {
+      // Halo na base
+      const g = ctx.createRadialGradient(cx, h - 12, 4, cx, h - 12, cw * 2.2);
+      g.addColorStop(0, 'rgba(192, 132, 252, 0.36)');
+      g.addColorStop(1, 'rgba(192, 132, 252, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx - cw * 2.2, h - cw * 2.2, cw * 4.4, cw * 2.4);
+
+      // Cristal principal
       const grad = ctx.createLinearGradient(cx, h - ch, cx, h);
-      grad.addColorStop(0, 'rgba(216, 180, 254, 0.55)');
-      grad.addColorStop(1, 'rgba(88, 28, 135, 0.88)');
+      grad.addColorStop(0, 'rgba(216, 180, 254, 0.68)');
+      grad.addColorStop(0.5, 'rgba(139, 92, 246, 0.78)');
+      grad.addColorStop(1, 'rgba(59, 7, 100, 0.92)');
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.moveTo(cx, h - ch);
-      ctx.lineTo(cx + cw * 0.5, h - ch * 0.72);
-      ctx.lineTo(cx + cw * 0.35, h);
-      ctx.lineTo(cx - cw * 0.35, h);
-      ctx.lineTo(cx - cw * 0.5, h - ch * 0.72);
+      ctx.lineTo(cx + cw * 0.52, h - ch * 0.72);
+      ctx.lineTo(cx + cw * 0.36, h);
+      ctx.lineTo(cx - cw * 0.36, h);
+      ctx.lineTo(cx - cw * 0.52, h - ch * 0.72);
       ctx.closePath();
       ctx.fill();
 
-      ctx.strokeStyle = 'rgba(240, 171, 252, 0.55)';
-      ctx.lineWidth = 1.5;
+      // Faceta iluminada
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.moveTo(cx, h - ch);
+      ctx.lineTo(cx + cw * 0.52, h - ch * 0.72);
+      ctx.lineTo(cx, h - ch * 0.28);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = rim;
+      ctx.globalAlpha = 0.65;
+      ctx.lineWidth = 1.6;
       ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Cristalzinho satélite ao lado
+      const sx = cx + cw * 0.72;
+      const sh = ch * 0.45;
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.75)';
+      ctx.beginPath();
+      ctx.moveTo(sx, h - sh);
+      ctx.lineTo(sx + 10, h - sh * 0.6);
+      ctx.lineTo(sx + 6, h);
+      ctx.lineTo(sx - 8, h);
+      ctx.closePath();
+      ctx.fill();
     }
     return c;
   }
@@ -1419,6 +2207,14 @@ class GameWorld {
   // Desenho do Mundo
   // ==========================================================
 
+  _biomeWeight(blend, id) {
+    return (blend.current.id === id ? 1 - blend.t : 0) + (blend.next.id === id ? blend.t : 0);
+  }
+
+  _orbWeight(blend, style) {
+    return (blend.current.orbStyle === style ? 1 - blend.t : 0) + (blend.next.orbStyle === style ? blend.t : 0);
+  }
+
   drawBackground(ctx, W, H, camY = 0) {
     const blend = this.getBiomeBlend();
     const { current, next, t } = blend;
@@ -1427,6 +2223,10 @@ class GameWorld {
     if (!this.layers) return;
     const L = this.layers;
     const horizon = this.groundY - camY * 0.25;
+    const sunsetW = this._biomeWeight(blend, 'skatepark');
+    const metroW = this._biomeWeight(blend, 'metropolis');
+    const beachW = this._biomeWeight(blend, 'beach');
+    const cosmicW = this._biomeWeight(blend, 'cosmic');
 
     // Estrelas com fade-out suave na praia
     const starAlpha = current.starAlpha + (next.starAlpha - current.starAlpha) * t;
@@ -1434,14 +2234,32 @@ class GameWorld {
       this.tile(ctx, L.stars, this.scroll * 0.012, horizon - 470, W, starAlpha * 0.92);
     }
 
-    // Nebulosa no bioma cósmico
-    const cosmicWeight = current.id === 'cosmic' ? (1 - t) : next.id === 'cosmic' ? t : 0;
-    if (cosmicWeight > 0.02) {
-      this.tile(ctx, L.nebula, this.scroll * 0.018, horizon - 460, W, cosmicWeight * 0.9);
+    // Nebulosa + aurora suave no bioma cósmico
+    if (cosmicW > 0.02) {
+      this.tile(ctx, L.nebula, this.scroll * 0.018, horizon - 460, W, cosmicW * 0.9);
+      this._drawCosmicAurora(ctx, W, horizon, cosmicW);
+    }
+
+    // Holofotes lentos varrendo o céu na metrópole neon
+    if (metroW > 0.04) {
+      this._drawCyberSearchlights(ctx, W, horizon, metroW);
     }
 
     // Camada distante (com crossfade suave entre biomas)
     this._drawBiomeLayer(ctx, 'far', current.id, next.id, t, this.scroll * 0.055, horizon, W, 0.92, 6);
+
+    // Feixe suave do farol costeiro na praia
+    if (beachW > 0.05) {
+      this._drawBeachLighthouseBeam(ctx, W, horizon, beachW);
+    }
+
+    // Silhuetas de pássaros no pôr do sol ou gaivotas na praia
+    if (sunsetW > 0.05) {
+      this._drawSkyBirds(ctx, W, horizon, sunsetW, 'rgba(28, 18, 52, 0.72)', 0.14);
+    }
+    if (beachW > 0.05) {
+      this._drawSkyBirds(ctx, W, horizon, beachW, 'rgba(255, 255, 255, 0.85)', 0.22);
+    }
 
     // Névoa atmosférica separando as camadas
     const haze = ctx.createLinearGradient(0, horizon - 230, 0, horizon + 14);
@@ -1453,10 +2271,15 @@ class GameWorld {
     // Camada média
     this._drawBiomeLayer(ctx, 'mid', current.id, next.id, t, this.scroll * 0.16, horizon, W, 1, 4);
 
-    // Brilho especular animado sobre o oceano no bioma praia
-    const beachWeight = current.id === 'beach' ? (1 - t) : next.id === 'beach' ? t : 0;
-    if (beachWeight > 0.05) {
-      this._drawOceanSunGlint(ctx, W, horizon, beachWeight);
+    // Vida animada sobre a camada média (60fps leves)
+    if (metroW > 0.05) {
+      this._drawCyberLife(ctx, W, horizon, metroW);
+    }
+    if (beachW > 0.05) {
+      this._drawOceanSunGlint(ctx, W, horizon, beachW);
+    }
+    if (cosmicW > 0.05) {
+      this._drawCosmicFloaters(ctx, W, horizon, cosmicW);
     }
 
     // Objetos próximos de rua / píer / cristais
@@ -1475,6 +2298,177 @@ class GameWorld {
     }
   }
 
+  _drawSkyBirds(ctx, W, horizon, alpha, color, speedMul) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const span = W + 240;
+      const bx = W + 120 - ((this.time * (0.9 + i * 0.18) + this.scroll * speedMul + i * 310) % span);
+      const by = horizon - 245 - (i % 3) * 34 + Math.sin(this.time * 0.05 + i * 1.7) * 8;
+      const flap = Math.sin(this.time * 0.18 + i * 1.3) * 4.5;
+      const wing = 7 + (i % 2) * 2;
+      ctx.beginPath();
+      ctx.moveTo(bx - wing, by - flap);
+      ctx.quadraticCurveTo(bx - wing * 0.4, by - 4, bx, by);
+      ctx.quadraticCurveTo(bx + wing * 0.4, by - 4, bx + wing, by - flap);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  _drawCyberSearchlights(ctx, W, horizon, alpha) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const beams = [
+      { x: W * 0.24, rgb: '56, 189, 248', phase: 0 },
+      { x: W * 0.72, rgb: '244, 63, 126', phase: 2.1 }
+    ];
+    for (const b of beams) {
+      const sweep = Math.sin(this.time * 0.018 + b.phase) * 0.34;
+      ctx.save();
+      ctx.translate(b.x, horizon - 40);
+      ctx.rotate(sweep);
+      const g = ctx.createLinearGradient(0, 0, 0, -340);
+      g.addColorStop(0, `rgba(${b.rgb}, ${(0.16 * alpha).toFixed(3)})`);
+      g.addColorStop(1, `rgba(${b.rgb}, 0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(-12, 0);
+      ctx.lineTo(-76, -340);
+      ctx.lineTo(76, -340);
+      ctx.lineTo(12, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  _drawCyberLife(ctx, W, horizon, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Micro-tráfego aéreo distante entre prédios
+    for (let i = 0; i < 5; i++) {
+      const dir = i % 2 === 0 ? 1 : -1;
+      const span = W + 260;
+      const raw = (this.time * (1.8 + i * 0.45) + i * 240) % span;
+      const cx = dir > 0 ? raw - 130 : W + 130 - raw;
+      const cy = horizon - 110 - (i * 34);
+      const hue = i % 2 === 0 ? '#22d3ee' : '#f43f7e';
+      ctx.fillStyle = hue;
+      ctx.fillRect(cx, cy, 8, 2.5);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.fillRect(cx - dir * 12, cy + 0.5, 11, 1.4);
+    }
+
+    // Aerotrem neon deslizando sobre o monotrilho (horizon - 50)
+    const trainSpan = W + 520;
+    const tx = ((this.time * 5.2 + this.scroll * 0.08) % trainSpan) - 260;
+    const ty = horizon - 62;
+    ctx.fillStyle = '#0f172a';
+    this.roundRect(ctx, tx, ty, 196, 12, 5);
+    ctx.fill();
+    ctx.fillStyle = '#22d3ee';
+    ctx.fillRect(tx + 8, ty + 3, 178, 3.5);
+    ctx.fillStyle = '#f43f7e';
+    ctx.fillRect(tx + 4, ty + 8, 186, 2);
+
+    // Farol dianteiro do aerotrem
+    ctx.globalCompositeOperation = 'lighter';
+    const head = ctx.createLinearGradient(tx + 196, ty + 6, tx + 268, ty + 6);
+    head.addColorStop(0, `rgba(103, 232, 249, ${(0.55 * alpha).toFixed(3)})`);
+    head.addColorStop(1, 'rgba(103, 232, 249, 0)');
+    ctx.fillStyle = head;
+    ctx.beginPath();
+    ctx.moveTo(tx + 196, ty + 2);
+    ctx.lineTo(tx + 268, ty - 6);
+    ctx.lineTo(tx + 268, ty + 16);
+    ctx.lineTo(tx + 196, ty + 10);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  _drawBeachLighthouseBeam(ctx, W, horizon, alpha) {
+    const farCanvas = this.layers.biomes.beach && this.layers.biomes.beach.far;
+    if (!farCanvas) return;
+    const fw = farCanvas.width;
+    const offset = (this.scroll * 0.055) % fw;
+    let lx = fw * 0.64 - offset;
+    while (lx < -120) lx += fw;
+    while (lx > W + 120) lx -= fw;
+    const ly = horizon - 115;
+
+    const pulse = 0.45 + 0.55 * Math.abs(Math.sin(this.time * 0.032));
+    const dir = Math.cos(this.time * 0.032) >= 0 ? 1 : -1;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createLinearGradient(lx, ly, lx + dir * 170, ly - 16);
+    g.addColorStop(0, `rgba(254, 249, 195, ${(0.34 * pulse * alpha).toFixed(3)})`);
+    g.addColorStop(1, 'rgba(254, 249, 195, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);
+    ctx.lineTo(lx + dir * 170, ly - 32);
+    ctx.lineTo(lx + dir * 170, ly + 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  _drawCosmicAurora(ctx, W, horizon, alpha) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const bands = [
+      { y: horizon - 330, rgb: '168, 85, 247', amp: 24, freq: 0.005, speed: 0.018 },
+      { y: horizon - 285, rgb: '56, 189, 248', amp: 18, freq: 0.0065, speed: -0.014 }
+    ];
+    for (const b of bands) {
+      const grad = ctx.createLinearGradient(0, b.y - 38, 0, b.y + 44);
+      grad.addColorStop(0, `rgba(${b.rgb}, 0)`);
+      grad.addColorStop(0.5, `rgba(${b.rgb}, ${(0.16 * alpha).toFixed(3)})`);
+      grad.addColorStop(1, `rgba(${b.rgb}, 0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, b.y + 40);
+      for (let x = 0; x <= W; x += 64) {
+        const wave = Math.sin(x * b.freq + this.time * b.speed) * b.amp;
+        ctx.lineTo(x, b.y + wave);
+      }
+      ctx.lineTo(W, b.y + 44);
+      ctx.lineTo(0, b.y + 44);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  _drawCosmicFloaters(ctx, W, horizon, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.72;
+    for (let i = 0; i < 4; i++) {
+      const span = W + 220;
+      const fx = W + 110 - ((this.scroll * 0.24 + i * 360) % span);
+      const fy = horizon - 145 - (i % 2) * 58 + Math.sin(this.time * 0.04 + i * 1.9) * 10;
+      const s = 6 + (i % 3) * 3;
+      ctx.fillStyle = i % 2 === 0 ? '#c084fc' : '#67e8f9';
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - s * 1.4);
+      ctx.lineTo(fx + s * 0.75, fy);
+      ctx.lineTo(fx, fy + s * 1.4);
+      ctx.lineTo(fx - s * 0.75, fy);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   _drawOceanSunGlint(ctx, W, horizon, alpha) {
     const sx = W * 0.78;
     ctx.save();
@@ -1486,6 +2480,16 @@ class GameWorld {
       const gw = 110 - i * 8;
       ctx.fillStyle = 'rgba(254, 249, 195, 0.55)';
       ctx.fillRect(sx - gw * 0.5 + sway, y, gw, 3);
+    }
+
+    // Cristas de espuma animadas rolando suavemente no oceano
+    ctx.globalAlpha = alpha * 0.34;
+    ctx.fillStyle = '#e0f2fe';
+    for (let i = 0; i < 7; i++) {
+      const wx = W + 120 - ((this.scroll * 0.22 + this.time * 0.9 + i * 210) % (W + 240));
+      const wy = horizon - 28 - (i % 3) * 30 + Math.sin(this.time * 0.08 + i) * 2;
+      const ww = 48 + (i % 3) * 24;
+      ctx.fillRect(wx, wy, ww, 2.6);
     }
     ctx.restore();
   }
@@ -1503,27 +2507,43 @@ class GameWorld {
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, H);
 
-    // Estrelas cadentes no bioma cósmico
+    // Estrelas cadentes no bioma cósmico (com núcleo brilhante)
     if (this._meteors.length > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       ctx.lineCap = 'round';
       for (const m of this._meteors) {
-        ctx.globalAlpha = Math.max(0, m.life);
-        ctx.strokeStyle = '#e9d5ff';
-        ctx.lineWidth = 2.4;
+        const life = Math.max(0, m.life);
+        const tailX = m.x - m.vx * 4.2;
+        const tailY = m.y - m.vy * 4.2;
+        const mg = ctx.createLinearGradient(m.x, m.y, tailX, tailY);
+        mg.addColorStop(0, '#ffffff');
+        mg.addColorStop(0.28, m.color || '#e9d5ff');
+        mg.addColorStop(1, 'rgba(233, 213, 255, 0)');
+        ctx.globalAlpha = life;
+        ctx.strokeStyle = mg;
+        ctx.lineWidth = 2.8;
         ctx.beginPath();
         ctx.moveTo(m.x, m.y);
-        ctx.lineTo(m.x - m.vx * 3.5, m.y - m.vy * 3.5);
+        ctx.lineTo(tailX, tailY);
         ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, 2.2, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     }
 
-    // Astro principal do céu (com estilo dedicado por bioma)
+    // Astro principal do céu (com crossfade real de detalhes entre biomas)
     const sx = W * 0.78;
     const sy = this.groundY - 340 - camY * 0.22;
     const r = 62;
+    const sunsetOrbW = this._orbWeight(blend, 'sunset');
+    const tropicalOrbW = this._orbWeight(blend, 'tropicalSun');
+    const moonOrbW = this._orbWeight(blend, 'neonMoon');
+    const planetOrbW = this._orbWeight(blend, 'ringedPlanet');
 
     // Raios crepusculares / halo atmosférico
     ctx.save();
@@ -1535,9 +2555,10 @@ class GameWorld {
     ctx.fillStyle = bloom;
     ctx.fillRect(sx - r * 5.2, sy - r * 5.2, r * 10.4, r * 10.4);
 
-    // Raios solares sutis no pôr do sol e praia
-    if (current.orbStyle === 'sunset' || current.orbStyle === 'tropicalSun') {
-      ctx.globalAlpha = 0.08 * (1 - t * 0.5);
+    // Raios solares suaves no pôr do sol e na praia (com fade contínuo)
+    const sunRayW = Math.min(1, sunsetOrbW + tropicalOrbW);
+    if (sunRayW > 0.02) {
+      ctx.globalAlpha = 0.085 * sunRayW;
       ctx.fillStyle = '#fef3c7';
       for (let i = 0; i < 6; i++) {
         const ang = (i * Math.PI) / 3 + this.time * 0.0008;
@@ -1551,10 +2572,11 @@ class GameWorld {
     }
     ctx.restore();
 
-    // Parte traseira do anel planetário (se cósmico)
-    if (current.orbStyle === 'ringedPlanet' || (next.orbStyle === 'ringedPlanet' && t > 0.4)) {
+    // Parte traseira do anel planetário (crossfade contínuo)
+    if (planetOrbW > 0.02) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(192, 132, 252, 0.65)';
+      ctx.globalAlpha = planetOrbW;
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.72)';
       ctx.lineWidth = 6;
       ctx.beginPath();
       ctx.ellipse(sx, sy, r * 2.25, r * 0.52, -0.26, Math.PI, Math.PI * 2);
@@ -1572,29 +2594,42 @@ class GameWorld {
     ctx.arc(sx, sy, r, 0, Math.PI * 2);
     ctx.fill();
 
-    // Detalhes específicos do astro
-    if (current.orbStyle === 'ringedPlanet') {
-      // Faixas sutis do planeta + parte frontal do anel
+    // Detalhes específicos do astro com fade suave (sem "pop" nas viradas)
+    if (planetOrbW > 0.02) {
       ctx.save();
+      ctx.globalAlpha = planetOrbW;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r * 0.85, -0.35, 0.45);
+      ctx.stroke();
+
       ctx.strokeStyle = '#e879f9';
       ctx.lineWidth = 5;
       ctx.beginPath();
       ctx.ellipse(sx, sy, r * 2.25, r * 0.52, -0.26, 0, Math.PI);
       ctx.stroke();
       ctx.restore();
-    } else if (current.orbStyle === 'neonMoon') {
-      ctx.fillStyle = 'rgba(140, 120, 180, 0.28)';
+    }
+    if (moonOrbW > 0.02) {
+      ctx.save();
+      ctx.globalAlpha = moonOrbW;
+      ctx.fillStyle = 'rgba(140, 120, 180, 0.30)';
       const craters = [[-18, -14, 11], [14, 8, 8], [-6, 22, 6], [24, -20, 5]];
       for (const [cx, cy, cr] of craters) {
         ctx.beginPath();
         ctx.arc(sx + cx, sy + cy, cr, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (current.orbStyle === 'sunset') {
-      // Faixas atmosféricas quentes cortando a base do sol poente
+      ctx.restore();
+    }
+    if (sunsetOrbW > 0.02) {
+      ctx.save();
+      ctx.globalAlpha = sunsetOrbW;
       ctx.fillStyle = 'rgba(201, 86, 87, 0.28)';
       ctx.fillRect(sx - r, sy + r * 0.35, r * 2, 4);
       ctx.fillRect(sx - r, sy + r * 0.58, r * 2, 5);
+      ctx.restore();
     }
 
     // Nuvens estilizadas com borda iluminada (rim light)
@@ -1654,9 +2689,308 @@ class GameWorld {
 
     const blend = this.getBiomeBlend();
     for (const p of this.platforms) this.drawPlatform(ctx, p, blend);
+    this.drawRecordFlag(ctx, W);
+    for (const pad of this.pads) this.drawPad(ctx, pad);
+    for (const ep of this.elevatedPlatforms) this.drawElevatedPlatform(ctx, ep, blend);
     for (const r of this.ramps) this.drawRamp(ctx, r);
     for (const rail of this.rails) this.drawRail(ctx, rail, blend);
     for (const o of this.obstacles) this.drawObstacle(ctx, o);
+  }
+
+  drawRecordFlag(ctx, W) {
+    if (!this.recordDistance || this.recordDistance < 100) return;
+    const flagX = 190 + (this.recordDistance - this.playerDistance) * 10;
+    if (flagX < -180 || flagX > W + 220) return;
+
+    const y = this.groundY;
+    const passed = !!this.recordPassed;
+    const accent = passed ? '#34d399' : '#fbbf24';
+    const accentRgb = passed ? '52, 211, 153' : '251, 191, 36';
+
+    ctx.save();
+
+    // Feixe luminoso vertical para leitura antecipada de longe
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const beam = ctx.createLinearGradient(0, y - 340, 0, y);
+    beam.addColorStop(0, `rgba(${accentRgb}, 0)`);
+    beam.addColorStop(0.65, `rgba(${accentRgb}, 0.14)`);
+    beam.addColorStop(1, `rgba(${accentRgb}, 0.34)`);
+    ctx.fillStyle = beam;
+    ctx.fillRect(flagX - 18, y - 340, 36, 340);
+    ctx.restore();
+
+    // Faixa luminosa de linha de chegada pintada sobre o asfalto
+    ctx.fillStyle = `rgba(${accentRgb}, 0.85)`;
+    ctx.fillRect(flagX - 5, y, 10, TRACK.SURFACE);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    for (let cy = y + 8; cy < y + TRACK.SURFACE - 6; cy += 18) {
+      ctx.fillRect(flagX - 5, cy, 5, 9);
+      ctx.fillRect(flagX, cy + 9, 5, 9);
+    }
+
+    // Base e poste dourado com contorno escuro
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(flagX - 11, y - 6, 22, 7);
+    ctx.fillRect(flagX - 5, y - 182, 10, 182);
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(flagX - 3, y - 180, 6, 180);
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath();
+    ctx.arc(flagX, y - 184, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Bandeirola flutuante maior e mais legível
+    const wave = Math.sin(this.time * 0.14) * 4;
+    ctx.fillStyle = passed ? '#10b981' : '#f43f7e';
+    ctx.beginPath();
+    ctx.moveTo(flagX + 3, y - 178);
+    ctx.lineTo(flagX + 158, y - 166 + wave);
+    ctx.lineTo(flagX + 146, y - 134 + wave);
+    ctx.lineTo(flagX + 3, y - 130);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 13px Outfit, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const label = passed ? `🏆 BATIDO! ${this.recordDistance}m` : `🏆 RECORDE ${this.recordDistance}m`;
+    ctx.fillText(label, flagX + 12, y - 153 + wave * 0.5);
+    ctx.restore();
+  }
+
+  drawPad(ctx, pad) {
+    const { x, y, width: w } = pad;
+    ctx.save();
+    if (pad.type === 'bounce') {
+      const springLift = pad.anim > 0 ? Math.sin((pad.anim / 18) * Math.PI) * 11 : 0;
+      const topY = y - 18 - springLift;
+
+      // Halo suave no chão
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const glow = ctx.createRadialGradient(x + w * 0.5, y - 6, 6, x + w * 0.5, y - 6, w * 0.72);
+      glow.addColorStop(0, 'rgba(52, 211, 153, 0.36)');
+      glow.addColorStop(1, 'rgba(52, 211, 153, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 24, y - 50, w + 48, 60);
+      ctx.restore();
+
+      // Molas metálicas em zigue-zague que esticam com springLift
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 2.4;
+      ctx.lineJoin = 'round';
+      for (const sx of [x + 17, x + w - 17]) {
+        ctx.beginPath();
+        ctx.moveTo(sx, y - 5);
+        ctx.lineTo(sx - 6, y - 8 - springLift * 0.25);
+        ctx.lineTo(sx + 6, y - 11 - springLift * 0.55);
+        ctx.lineTo(sx - 5, y - 14 - springLift * 0.8);
+        ctx.lineTo(sx, topY + 6);
+        ctx.stroke();
+      }
+
+      // Base ancorada com contorno escuro
+      ctx.fillStyle = '#064e3b';
+      ctx.strokeStyle = '#020617';
+      ctx.lineWidth = 2;
+      this.roundRect(ctx, x, y - 7, w, 9, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      // Lona elástica verde-ciano brilhante
+      const grad = ctx.createLinearGradient(x, topY, x + w, topY + 9);
+      grad.addColorStop(0, '#10b981');
+      grad.addColorStop(0.5, '#67e8f9');
+      grad.addColorStop(1, '#10b981');
+      ctx.fillStyle = grad;
+      this.roundRect(ctx, x + 3, topY, w - 6, 9, 4.5);
+      ctx.fill();
+      ctx.strokeStyle = '#020617';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      ctx.fillRect(x + 9, topY + 1.5, w - 18, 2);
+
+      // Chevrons duplos animados para cima (com contorno escuro para contraste na Praia)
+      const bob = Math.sin(this.time * 0.16) * 3.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let i = 0; i < 2; i++) {
+        const ay = topY - 10 - i * 9 + bob;
+        ctx.strokeStyle = 'rgba(2, 6, 23, 0.82)';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(x + w * 0.5 - 10, ay);
+        ctx.lineTo(x + w * 0.5, ay - 9);
+        ctx.lineTo(x + w * 0.5 + 10, ay);
+        ctx.stroke();
+
+        ctx.strokeStyle = i === 0 ? '#67e8f9' : '#a7f3d0';
+        ctx.lineWidth = 2.6;
+        ctx.stroke();
+      }
+    } else {
+      // Halo luminoso do Speed Pad
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const glow = ctx.createRadialGradient(x + w * 0.5, y, 6, x + w * 0.5, y, w * 0.68);
+      glow.addColorStop(0, 'rgba(34, 211, 238, 0.42)');
+      glow.addColorStop(1, 'rgba(34, 211, 238, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 20, y - 34, w + 40, 52);
+      ctx.restore();
+
+      // Faixa Speed Pad no asfalto com recorte escuro
+      const grad = ctx.createLinearGradient(x, y, x + w, y);
+      grad.addColorStop(0, '#0284c7');
+      grad.addColorStop(0.5, '#22d3ee');
+      grad.addColorStop(1, '#a855f7');
+      ctx.fillStyle = grad;
+      this.roundRect(ctx, x, y - 6, w, 10, 4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Chevrons de velocidade em cascata
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      const shift = (this.time * 2.8) % 22;
+      for (let sx = x + 10 + shift; sx < x + w - 10; sx += 22) {
+        ctx.strokeStyle = 'rgba(2, 6, 23, 0.6)';
+        ctx.lineWidth = 4.2;
+        ctx.beginPath();
+        ctx.moveTo(sx - 6, y - 9);
+        ctx.lineTo(sx + 3, y - 1);
+        ctx.lineTo(sx - 6, y + 6);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  drawElevatedPlatform(ctx, ep, blend) {
+    const { x, y, width: w, height: h } = ep;
+    const biomeId = blend.current.id;
+    const edgeColor = lerpHex(blend.current.edgeColor, blend.next.edgeColor, blend.t);
+    ctx.save();
+
+    if (biomeId === 'cosmic') {
+      // Ponte energética flutuante com propulsores pulsantes (sem pilares pesados)
+      const pulse = 0.72 + Math.sin(this.time * 0.16) * 0.25;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const tx of [x + 28, x + w - 28]) {
+        const tg = ctx.createLinearGradient(tx, y + h, tx, y + h + 38 * pulse);
+        tg.addColorStop(0, 'rgba(56, 189, 248, 0.72)');
+        tg.addColorStop(0.5, 'rgba(168, 85, 247, 0.35)');
+        tg.addColorStop(1, 'rgba(168, 85, 247, 0)');
+        ctx.fillStyle = tg;
+        ctx.beginPath();
+        ctx.moveTo(tx - 11, y + h);
+        ctx.lineTo(tx + 11, y + h);
+        ctx.lineTo(tx + 4, y + h + 38 * pulse);
+        ctx.lineTo(tx - 4, y + h + 38 * pulse);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0, '#581c87');
+      grad.addColorStop(1, '#1e1b4b');
+      this.roundRect(ctx, x, y, w, h, 7);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = '#0f0624';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+    } else if (biomeId === 'beach') {
+      // Deck elevado tropical de píer de madeira
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(x + 18, y + h, 10, this.groundY - (y + h));
+      ctx.fillRect(x + w - 28, y + h, 10, this.groundY - (y + h));
+      ctx.fillStyle = 'rgba(254, 240, 138, 0.20)';
+      ctx.fillRect(x + 18, y + h, 3, this.groundY - (y + h));
+      ctx.fillRect(x + w - 28, y + h, 3, this.groundY - (y + h));
+
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0, '#b45309');
+      grad.addColorStop(1, '#451a03');
+      this.roundRect(ctx, x, y, w, h, 5);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = '#1c0a00';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+
+      // Juntas das tábuas
+      ctx.fillStyle = 'rgba(28, 10, 0, 0.5)';
+      for (let tx = x + 28; tx < x + w - 18; tx += 28) {
+        ctx.fillRect(tx, y + 4, 2, h - 5);
+      }
+    } else {
+      // Skatepark / Metrópole: passarela urbana/holográfica com suporte em treliça
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+      ctx.fillRect(x + 18, y + h, 9, this.groundY - (y + h));
+      ctx.fillRect(x + w - 27, y + h, 9, this.groundY - (y + h));
+      if (biomeId === 'metropolis') {
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.45)';
+        ctx.fillRect(x + 21, y + h, 2, this.groundY - (y + h));
+        ctx.fillRect(x + w - 24, y + h, 2, this.groundY - (y + h));
+      }
+
+      const grad = ctx.createLinearGradient(0, y, 0, y + h);
+      grad.addColorStop(0, biomeId === 'metropolis' ? '#2e1065' : '#334155');
+      grad.addColorStop(1, '#0f172a');
+      this.roundRect(ctx, x, y, w, h, 6);
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = '#020617';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+
+      // Trama metálica discreta
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+      ctx.lineWidth = 1.4;
+      for (let tx = x + 16; tx < x + w - 20; tx += 24) {
+        ctx.beginPath();
+        ctx.moveTo(tx, y + h - 2);
+        ctx.lineTo(tx + 12, y + 5);
+        ctx.stroke();
+      }
+    }
+
+    // Faixa superior luminosa de contato + destaque nas pontas (leitura de plataforma one-way)
+    ctx.fillStyle = edgeColor || '#22d3ee';
+    ctx.fillRect(x + 3, y + 1, w - 6, 4);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.fillRect(x + 6, y + 1, w - 12, 1.5);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = edgeColor || '#22d3ee';
+    ctx.globalAlpha = 0.55 + Math.sin(this.time * 0.12) * 0.2;
+    ctx.fillRect(x + 2, y, 12, 5);
+    ctx.fillRect(x + w - 14, y, 12, 5);
+    ctx.restore();
+
+    ctx.restore();
   }
 
   drawPlatform(ctx, p, blend) {
@@ -1693,16 +3027,30 @@ class GameWorld {
     ctx.fillStyle = wall;
     ctx.fillRect(x, y + TRACK.SURFACE, w, TRACK.DEPTH - TRACK.SURFACE);
 
-    // Textura procedural sincronizada com o scroll da plataforma
-    const texKey = current.id === 'beach' ? 'wood' : current.id === 'cosmic' ? 'cosmic' : 'asphalt';
-    const pattern = this._getPattern(ctx, texKey);
-    if (pattern) {
+    // Textura procedural sincronizada com o scroll (com crossfade suave entre biomas)
+    const texKeyCurr = current.id === 'beach' ? 'wood' : current.id === 'cosmic' ? 'cosmic' : 'asphalt';
+    const texKeyNext = next.id === 'beach' ? 'wood' : next.id === 'cosmic' ? 'cosmic' : 'asphalt';
+    const patternCurr = this._getPattern(ctx, texKeyCurr);
+    if (patternCurr && (1 - t > 0.02 || texKeyCurr === texKeyNext)) {
       ctx.save();
       ctx.translate(Math.round(x), Math.round(y));
-      ctx.globalAlpha = texKey === 'wood' ? 0.85 : 0.65;
-      ctx.fillStyle = pattern;
+      const baseA = texKeyCurr === 'wood' ? 0.85 : 0.65;
+      ctx.globalAlpha = texKeyCurr === texKeyNext ? baseA : baseA * (1 - t);
+      ctx.fillStyle = patternCurr;
       ctx.fillRect(0, 0, w, TRACK.SURFACE);
       ctx.restore();
+    }
+    if (texKeyCurr !== texKeyNext && t > 0.02) {
+      const patternNext = this._getPattern(ctx, texKeyNext);
+      if (patternNext) {
+        ctx.save();
+        ctx.translate(Math.round(x), Math.round(y));
+        const baseA = texKeyNext === 'wood' ? 0.85 : 0.65;
+        ctx.globalAlpha = baseA * t;
+        ctx.fillStyle = patternNext;
+        ctx.fillRect(0, 0, w, TRACK.SURFACE);
+        ctx.restore();
+      }
     }
 
     // Quina realista entre laje superior e parede inferior
@@ -1740,11 +3088,14 @@ class GameWorld {
     } else {
       this.drawSurfaceReflections(ctx, x, y, w, current.id);
 
-      // Faixas de sinalização (exceto no píer de madeira)
-      if (current.id !== 'beach') {
-        ctx.fillStyle = current.id === 'cosmic'
-          ? 'rgba(216, 180, 254, 0.22)'
-          : 'rgba(226, 232, 255, 0.16)';
+      // Faixas de sinalização com fade-out gradual ao entrar no píer de madeira
+      const beachW = this._biomeWeight(blend, 'beach');
+      const dashAlpha = 1 - beachW;
+      if (dashAlpha > 0.04) {
+        const cosmicW = this._biomeWeight(blend, 'cosmic');
+        ctx.fillStyle = cosmicW > 0.5
+          ? `rgba(216, 180, 254, ${(0.22 * dashAlpha).toFixed(3)})`
+          : `rgba(226, 232, 255, ${(0.16 * dashAlpha).toFixed(3)})`;
         for (let lx = x + 40; lx < x + w - 40; lx += 92) {
           ctx.fillRect(lx, y + 42, 50, 4);
         }
@@ -2163,10 +3514,145 @@ class GameWorld {
     ctx.save();
     if (obs.type === 'crate') {
       this.drawCrate(ctx, obs);
+    } else if (obs.type === 'drone') {
+      this.drawDrone(ctx, obs);
+    } else if (obs.type === 'barrel') {
+      this.drawBarrel(ctx, obs);
     } else {
       this.drawSign(ctx, obs);
     }
     ctx.restore();
+  }
+
+  drawDrone(ctx, o) {
+    const cx = o.x + o.width * 0.5;
+    const cy = o.y + o.height * 0.5;
+
+    // Feixe de scanner apontando para o asfalto (guia visual de posição X)
+    const beamH = Math.max(12, this.groundY - (o.y + o.height));
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const scan = ctx.createLinearGradient(cx, o.y + o.height, cx, this.groundY);
+    scan.addColorStop(0, 'rgba(34, 211, 238, 0.26)');
+    scan.addColorStop(1, 'rgba(244, 63, 126, 0.04)');
+    ctx.fillStyle = scan;
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, o.y + o.height - 4);
+    ctx.lineTo(cx + 8, o.y + o.height - 4);
+    ctx.lineTo(cx + 26, o.y + o.height + beamH);
+    ctx.lineTo(cx - 26, o.y + o.height + beamH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Brilho neon magenta
+    const glow = ctx.createRadialGradient(cx, cy, 4, cx, cy, 46);
+    glow.addColorStop(0, 'rgba(244, 63, 126, 0.44)');
+    glow.addColorStop(1, 'rgba(244, 63, 126, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(cx - 46, cy - 46, 92, 92);
+    ctx.restore();
+
+    // Sombra/guia no chão abaixo do drone
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+    ctx.beginPath();
+    ctx.ellipse(cx, this.groundY + 4, 22, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Suportes e hélices girando
+    const propW = 14 + Math.sin(this.time * 0.9) * 8;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(o.x + 11, o.y + 6, 3, 6);
+    ctx.fillRect(o.x + o.width - 14, o.y + 6, 3, 6);
+    ctx.fillStyle = '#67e8f9';
+    ctx.fillRect(o.x + 2, o.y + 4, propW, 3);
+    ctx.fillRect(o.x + o.width - propW - 2, o.y + 4, propW, 3);
+
+    // Corpo do drone com contorno escuro externo de alto contraste
+    this.roundRect(ctx, o.x + 6, o.y + 10, o.width - 12, o.height - 14, 10);
+    ctx.fillStyle = '#1e293b';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.92)';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = '#f43f7e';
+    ctx.lineWidth = 2.4;
+    ctx.stroke();
+
+    // Visor scanner pulsante
+    const scanPulse = 6.5 + Math.sin(this.time * 0.25) * 1.2;
+    ctx.fillStyle = '#22d3ee';
+    ctx.beginPath();
+    ctx.arc(cx, cy + 2, scanPulse, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx - 2, cy, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawBarrel(ctx, o) {
+    const r = o.width * 0.5;
+    const cx = o.x + r;
+    const cy = o.y + o.height * 0.5;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.44)';
+    ctx.beginPath();
+    ctx.ellipse(cx, this.groundY + 4, r * 0.95, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(o.rot || 0);
+    const grad = ctx.createRadialGradient(-4, -4, 3, 0, 0, r);
+    grad.addColorStop(0, '#fbbf24');
+    grad.addColorStop(0.65, '#c2410c');
+    grad.addColorStop(1, '#7c2d12');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Contorno escuro externo para destacar no píer da Praia
+    ctx.strokeStyle = 'rgba(15, 6, 2, 0.95)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Aro metálico interno
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.78, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Tábuas cruzadas com alto contraste
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.65, 0); ctx.lineTo(r * 0.65, 0);
+    ctx.moveTo(0, -r * 0.65); ctx.lineTo(0, r * 0.65);
+    ctx.stroke();
+
+    // Miolo central
+    ctx.fillStyle = '#451a03';
+    ctx.beginPath();
+    ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Seta indicadora de "pule!" acima do barril (com contorno escuro para leitura imediata)
+    const bob = Math.sin(this.time * 0.1) * 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.lineWidth = 5.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 9, o.y - 12 + bob);
+    ctx.lineTo(cx, o.y - 21 + bob);
+    ctx.lineTo(cx + 9, o.y - 12 + bob);
+    ctx.stroke();
+    ctx.strokeStyle = '#67e8f9';
+    ctx.lineWidth = 2.8;
+    ctx.stroke();
   }
 
   drawCrate(ctx, o) {
@@ -2174,7 +3660,7 @@ class GameWorld {
     const r = 6;
 
     // Sombra projetada realista no asfalto
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.44)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.46)';
     ctx.beginPath();
     ctx.ellipse(x + w * 0.46, y + h + 4, w * 0.68, 7, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -2192,7 +3678,7 @@ class GameWorld {
     ctx.save();
     this.roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 3);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(244, 63, 126, 0.36)';
+    ctx.strokeStyle = 'rgba(244, 63, 126, 0.45)';
     ctx.lineWidth = 8;
     for (let i = -h; i < w; i += 18) {
       ctx.beginPath();
@@ -2202,31 +3688,38 @@ class GameWorld {
     }
     ctx.restore();
 
-    // Moldura metálica + cantoneiras com parafusos
+    // Contorno escuro externo + moldura neon para leitura instantânea em qualquer bioma
     this.roundRect(ctx, x, y, w, h, r);
-    ctx.strokeStyle = 'rgba(244, 63, 126, 0.82)';
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.92)';
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(244, 63, 126, 0.92)';
     ctx.lineWidth = 2.2;
     ctx.stroke();
 
-    ctx.fillStyle = '#94a3b8';
+    ctx.fillStyle = '#cbd5e1';
     const bolts = [[x + 6, y + 6], [x + w - 9, y + 6], [x + 6, y + h - 9], [x + w - 9, y + h - 9]];
     for (const [bx, by] of bolts) {
       ctx.fillRect(bx, by, 3, 3);
     }
 
     // Luz especular superior
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.30)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.34)';
     ctx.fillRect(x + 5, y + 2, w - 10, 2);
 
-    // Indicador de "pule"
+    // Indicador de "pule" com contorno escuro para destacar sobre qualquer fundo
     const bob = Math.sin(this.time * 0.08) * 3;
-    ctx.strokeStyle = 'rgba(34, 211, 238, 0.9)';
-    ctx.lineWidth = 3;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.lineWidth = 5.5;
     ctx.beginPath();
     ctx.moveTo(x + w * 0.5 - 9, y - 14 + bob);
     ctx.lineTo(x + w * 0.5, y - 23 + bob);
     ctx.lineTo(x + w * 0.5 + 9, y - 14 + bob);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.96)';
+    ctx.lineWidth = 2.8;
     ctx.stroke();
   }
 
@@ -2234,22 +3727,21 @@ class GameWorld {
     const { x, y, width: w, height: h } = o;
 
     // Sombra projetada no asfalto abaixo da placa (guia visual de agachamento!)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.34)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.36)';
     ctx.beginPath();
     ctx.ellipse(x + w * 0.5, this.groundY + 5, w * 0.62, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Treliça metálica descendo do topo
-    ctx.strokeStyle = 'rgba(110, 124, 162, 0.55)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(30, 41, 59, 0.72)';
+    ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(x + 14, y); ctx.lineTo(x + 14, y - 900);
     ctx.moveTo(x + w - 14, y); ctx.lineTo(x + w - 14, y - 900);
     ctx.stroke();
 
-    // Travessas diagonais da treliça
-    ctx.strokeStyle = 'rgba(110, 124, 162, 0.32)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
+    ctx.lineWidth = 1.6;
     for (let ty = y - 24; ty > y - 340; ty -= 32) {
       ctx.beginPath();
       ctx.moveTo(x + 14, ty);
@@ -2262,7 +3754,7 @@ class GameWorld {
     ctx.fillRect(x + 9, y - 6, 10, 8);
     ctx.fillRect(x + w - 19, y - 6, 10, 8);
 
-    // Painel chanfrado
+    // Painel chanfrado com contorno escuro espesso (alto contraste sobre céu claro da Praia)
     const grad = ctx.createLinearGradient(x, y, x, y + h);
     grad.addColorStop(0, '#fef08a');
     grad.addColorStop(0.5, '#fbbf24');
@@ -2270,25 +3762,32 @@ class GameWorld {
     this.roundRect(ctx, x, y, w, h, 7);
     ctx.fillStyle = grad;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(30, 20, 5, 0.82)';
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(15, 10, 2, 0.94)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Moldura interna de alerta
+    this.roundRect(ctx, x + 4, y + 4, w - 8, h - 8, 4);
+    ctx.strokeStyle = 'rgba(30, 20, 5, 0.35)';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
 
     // Highlight metálico superior
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
     ctx.fillRect(x + 6, y + 3, w - 12, 2);
 
-    // Chevrons para baixo
-    ctx.strokeStyle = 'rgba(30, 20, 5, 0.85)';
-    ctx.lineWidth = 3.5;
+    // Chevrons para baixo bem legíveis
+    ctx.strokeStyle = 'rgba(20, 12, 2, 0.92)';
+    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     const bob = Math.sin(this.time * 0.08) * 2;
     for (let i = 0; i < 2; i++) {
       const cy = y + 20 + i * 17 + bob;
       ctx.beginPath();
-      ctx.moveTo(x + w * 0.5 - 13, cy - 6);
-      ctx.lineTo(x + w * 0.5, cy + 4);
-      ctx.lineTo(x + w * 0.5 + 13, cy - 6);
+      ctx.moveTo(x + w * 0.5 - 14, cy - 6);
+      ctx.lineTo(x + w * 0.5, cy + 5);
+      ctx.lineTo(x + w * 0.5 + 14, cy - 6);
       ctx.stroke();
     }
 
@@ -2296,15 +3795,15 @@ class GameWorld {
     const blink = Math.sin(this.time * 0.22) > 0;
     ctx.fillStyle = blink ? '#ef4444' : '#7f1d1d';
     ctx.beginPath();
-    ctx.arc(x + 9, y + 9, 3.2, 0, Math.PI * 2);
-    ctx.arc(x + w - 9, y + 9, 3.2, 0, Math.PI * 2);
+    ctx.arc(x + 9, y + 9, 3.4, 0, Math.PI * 2);
+    ctx.arc(x + w - 9, y + 9, 3.4, 0, Math.PI * 2);
     ctx.fill();
 
     // Halo de alerta
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const glow = ctx.createRadialGradient(x + w * 0.5, y + h * 0.5, 5, x + w * 0.5, y + h * 0.5, 72);
-    glow.addColorStop(0, 'rgba(251, 191, 36, 0.22)');
+    glow.addColorStop(0, 'rgba(251, 191, 36, 0.24)');
     glow.addColorStop(1, 'rgba(251, 191, 36, 0)');
     ctx.fillStyle = glow;
     ctx.fillRect(x - 72, y - 72, w + 144, h + 144);
@@ -2333,9 +3832,92 @@ class GameWorld {
       if (c.type === 'coin') this.drawCoin(ctx, c);
       else if (c.type === 'turbo') this.drawTurbo(ctx, c);
       else if (c.type === 'shield') this.drawShieldPickup(ctx, c);
+      else if (c.type === 'magnet') this.drawMagnetPickup(ctx, c);
+      else if (c.type === 'double') this.drawDoublePickup(ctx, c);
+      else if (c.type === 'letter') this.drawLetterPickup(ctx, c);
 
       ctx.restore();
     }
+  }
+
+  drawMagnetPickup(ctx, c) {
+    const r = c.size * 0.5;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 2.7);
+    glow.addColorStop(0, 'rgba(244, 63, 126, 0.55)');
+    glow.addColorStop(1, 'rgba(244, 63, 126, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-r * 2.7, -r * 2.7, r * 5.4, r * 5.4);
+    ctx.restore();
+
+    ctx.rotate(-0.25);
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = '#f43f7e';
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.7, Math.PI, 0);
+    ctx.stroke();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.7, 0); ctx.lineTo(-r * 0.7, r * 0.55);
+    ctx.moveTo(r * 0.7, 0); ctx.lineTo(r * 0.7, r * 0.55);
+    ctx.stroke();
+  }
+
+  drawDoublePickup(ctx, c) {
+    const r = c.size * 0.52;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 2.8);
+    glow.addColorStop(0, 'rgba(251, 191, 36, 0.58)');
+    glow.addColorStop(1, 'rgba(251, 191, 36, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-r * 2.8, -r * 2.8, r * 5.6, r * 5.6);
+    ctx.restore();
+
+    ctx.fillStyle = '#fbbf24';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `900 ${Math.round(r * 0.95)}px Outfit, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('2X', 0, 1);
+  }
+
+  drawLetterPickup(ctx, c) {
+    const r = c.size * 0.56;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 2.6);
+    glow.addColorStop(0, 'rgba(168, 85, 247, 0.62)');
+    glow.addColorStop(1, 'rgba(34, 211, 238, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(-r * 2.6, -r * 2.6, r * 5.2, r * 5.2);
+    ctx.restore();
+
+    const grad = ctx.createLinearGradient(-r, -r, r, r);
+    grad.addColorStop(0, '#fde047');
+    grad.addColorStop(0.5, '#f43f7e');
+    grad.addColorStop(1, '#8b5cf6');
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.4;
+    this.roundRect(ctx, -r * 0.9, -r * 0.9, r * 1.8, r * 1.8, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `900 ${Math.round(r * 1.15)}px Outfit, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(c.letter || 'L', 0, 1);
   }
 
   drawCoin(ctx, c) {
@@ -2357,6 +3939,9 @@ class GameWorld {
     ctx.beginPath();
     ctx.ellipse(0, 0, Math.max(1.8, r * faceW), r, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
 
     if (faceW > 0.18) {
       const grad = ctx.createLinearGradient(-r, -r, r, r);
@@ -2455,33 +4040,80 @@ class GameWorld {
     ctx.stroke();
   }
 
-  /** Clima ambiente por bioma, névoa atmosférica e linhas de velocidade. */
+  /** Clima ambiente por bioma com crossfade suave, névoa atmosférica e linhas de velocidade. */
   drawForeground(ctx, W, H, speedRatio) {
     const blend = this.getBiomeBlend();
-    const biomeId = blend.current.id;
+    const sunsetW = this._biomeWeight(blend, 'skatepark');
+    const metroW = this._biomeWeight(blend, 'metropolis');
+    const beachW = this._biomeWeight(blend, 'beach');
+    const cosmicW = this._biomeWeight(blend, 'cosmic');
 
-    // Clima ambiente por bioma (pool pré-alocado, zero GC)
+    // Clima ambiente por bioma (pool pré-alocado, zero GC, fade suave nas transições)
     ctx.save();
-    if (biomeId === 'metropolis') {
-      ctx.strokeStyle = 'rgba(186, 230, 253, 0.24)';
+    if (metroW > 0.03) {
+      // Chuva fina diagonal neon
+      ctx.strokeStyle = `rgba(186, 230, 253, ${(0.26 * metroW).toFixed(3)})`;
       ctx.lineWidth = 1.2;
       ctx.beginPath();
-      for (let i = 0; i < this._ambientMotes.length; i++) {
+      for (let i = 0; i < 42 && i < this._ambientMotes.length; i++) {
         const m = this._ambientMotes[i];
         ctx.moveTo(m.x, m.y);
         ctx.lineTo(m.x - 8, m.y + 18);
       }
       ctx.stroke();
-    } else {
+
+      // Faíscas neon ascendentes (ciano e magenta)
       ctx.globalCompositeOperation = 'lighter';
-      const moteColor = biomeId === 'beach'
-        ? '254, 249, 195'
-        : biomeId === 'cosmic'
-          ? '216, 180, 254'
-          : '253, 186, 116';
+      for (let i = 42; i < this._ambientMotes.length; i++) {
+        const m = this._ambientMotes[i];
+        const rgb = i % 2 === 0 ? '34, 211, 238' : '244, 63, 126';
+        ctx.fillStyle = `rgba(${rgb}, ${(m.alpha * 0.65 * metroW).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.size * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    if (beachW > 0.03) {
+      // Bolhas / brisa marinha translúcida
+      ctx.lineWidth = 1.1;
       for (let i = 0; i < this._ambientMotes.length; i += 2) {
         const m = this._ambientMotes[i];
-        ctx.fillStyle = `rgba(${moteColor}, ${(m.alpha * 0.45).toFixed(3)})`;
+        const r = m.size * 1.45;
+        ctx.strokeStyle = `rgba(255, 255, 255, ${(m.alpha * 0.42 * beachW).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(254, 249, 195, ${(m.alpha * 0.25 * beachW).toFixed(3)})`;
+        ctx.fillRect(m.x - r * 0.35, m.y - r * 0.35, 1.5, 1.5);
+      }
+    }
+
+    if (cosmicW > 0.03) {
+      // Poeira estelar cintilante em forma de micro-estrelas
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < this._ambientMotes.length; i += 2) {
+        const m = this._ambientMotes[i];
+        const tw = 0.45 + 0.55 * Math.sin(this.time * 0.09 + m.phase);
+        const rgb = i % 4 === 0 ? '103, 232, 249' : '216, 180, 254';
+        const s = m.size * (1.1 + tw * 0.6);
+        ctx.strokeStyle = `rgba(${rgb}, ${(m.alpha * 0.65 * tw * cosmicW).toFixed(3)})`;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.moveTo(m.x - s, m.y); ctx.lineTo(m.x + s, m.y);
+        ctx.moveTo(m.x, m.y - s); ctx.lineTo(m.x, m.y + s);
+        ctx.stroke();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    if (sunsetW > 0.03) {
+      // Poeira dourada ao pôr do sol
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < this._ambientMotes.length; i += 2) {
+        const m = this._ambientMotes[i];
+        ctx.fillStyle = `rgba(253, 186, 116, ${(m.alpha * 0.45 * sunsetW).toFixed(3)})`;
         ctx.beginPath();
         ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
         ctx.fill();

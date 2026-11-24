@@ -72,6 +72,7 @@ function load(file) {
 }
 
 load('js/particles.js');
+load('js/progression.js');
 load('js/game_physics.js');
 load('js/game_world.js');
 
@@ -83,12 +84,8 @@ function check(name, cond, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  -> ' + detail : ''}`);
 }
 
-const VIDAS_INICIAIS = (() => {
-  const w = new sandbox.GameWorld();
-  const p = new sandbox.Player();
-  p.reset(w);
-  return p.lives;
-})();
+const VIDAS_INICIAIS = 3;
+const MAX_VIDAS = 5;
 
 function newRun() {
   const world = new sandbox.GameWorld();
@@ -109,6 +106,8 @@ console.log('\n=== 1. O jogador nasce apoiado no asfalto ===');
   check('pes exatamente sobre groundY', player.bottom === world.groundY,
     `bottom=${player.bottom} groundY=${world.groundY}`);
   check('onGround inicia verdadeiro', player.onGround === true);
+  check('inicia com 3 vidas e teto de 5', player.lives === VIDAS_INICIAIS && player.maxLives === MAX_VIDAS,
+    `vidas=${player.lives}/${player.maxLives}`);
 }
 
 // ============================================================
@@ -423,17 +422,22 @@ console.log('\n=== 14. Progressao de fases da a recompensa certa ===');
 {
   const { world, player } = newRun();
   const vistas = [];
-  let vidaNaVirada = null;
-  player.lives = 3;   // abaixo do teto, para a recompensa ser observavel
+  const viradas = [];
 
   for (let i = 0; i < 60000 && player.currentStageIndex < 3; i++) {
     const antes = player.currentStageIndex;
     const vidasAntes = player.lives;
     player.invincibleTimer = 10;   // atravessa obstaculos sem falsear as vidas
+    // Mantem na pista caso haja abismo nas fases 2-3 para observar a progressao limpa de vidas (3 -> 4 -> 5)
+    if (player.y > world.groundY - player.height) {
+      player.y = world.groundY - player.height;
+      player.vy = 0;
+      player.onGround = true;
+    }
     step(world, player, {});
     if (player.currentStageIndex !== antes) {
       vistas.push(player.currentStageIndex);
-      if (vidaNaVirada === null) vidaNaVirada = player.lives - vidasAntes;
+      viradas.push({ antes: vidasAntes, depois: player.lives });
     }
   }
 
@@ -441,16 +445,21 @@ console.log('\n=== 14. Progressao de fases da a recompensa certa ===');
     `fase final=${player.currentStageIndex + 1}, ${player.distance.toFixed(0)}m`);
   check('as fases avancam em ordem', vistas.join(',') === '1,2,3', `ordem=${vistas.join(',')}`);
   check('vidas ficam dentro do intervalo valido',
-    player.lives >= 0 && player.lives <= player.maxLives,
+    player.lives >= 0 && player.lives <= player.maxLives && player.maxLives === MAX_VIDAS,
     `vidas=${player.lives}/${player.maxLives}`);
-  check('virada de fase abaixo do teto da +1 vida', vidaNaVirada === 1, `ganho=${vidaNaVirada}`);
+  check('virada de fase sobe 3 -> 4 -> 5 e respeita teto 5',
+    viradas.length === 3 &&
+    viradas[0].antes === 3 && viradas[0].depois === 4 &&
+    viradas[1].antes === 4 && viradas[1].depois === 5 &&
+    viradas[2].antes === 5 && viradas[2].depois === 5,
+    viradas.map(v => `${v.antes}->${v.depois}`).join(', '));
 }
 
 // ============================================================
 console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
 {
   const { world, player } = newRun();
-  for (let i = 0; i < 7000; i++) { step(world, player, {}); player.lives = 5; player.isGameOver = false; }
+  for (let i = 0; i < 7000; i++) { step(world, player, {}); player.lives = VIDAS_INICIAIS; player.isGameOver = false; }
 
   const voltouParaCasa = [];
   const apoiadoNoResgate = [];
@@ -459,7 +468,10 @@ console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
     player.y = world.deathY + 10;
     player.vy = 20;
     player.onGround = false;
-    player.lives = 5;
+    player.isOnRamp = false;
+    player.isGrinding = false;
+    player.isGameOver = false;
+    player.lives = VIDAS_INICIAIS;
     step(world, player, {});
     apoiadoNoResgate.push(player.onGround);   // o pouso importa neste instante
     vidasAposResgate.push(player.lives);      // mede custo do resgate imediatamente
@@ -480,7 +492,7 @@ console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
     apoiadoNoResgate.every(Boolean),
     `apoiado em ${apoiadoNoResgate.filter(Boolean).length}/12`);
   check('o resgate custa exatamente uma vida',
-    vidasAposResgate.every(v => v === 4),
+    vidasAposResgate.every(v => v === VIDAS_INICIAIS - 1),
     `vidas=${vidasAposResgate.join(',')}`);
 }
 
@@ -990,6 +1002,267 @@ console.log('\n=== 25. Cutout Puppet Rig (assets/rig/*.png) com IK nos 4 esporte
     erro || `drawImage=${drawImageCalls}, nanCalls=${nanCalls}`);
   check('remada articula o pe traseiro de forma independente', peRemandoMoveu === true);
   check('agachamento abaixa o quadril dobrando os joelhos no IK', quadrilAgachou === true);
+}
+
+// ============================================================
+console.log('\n=== 26. Ima de Moedas atrai moedas e Estrela 2X dobra recompensa ===');
+{
+  const { world, player } = newRun();
+  world.obstacles.length = 0;
+  world.collectibles.length = 0;
+
+  // Coleta ima e coloca uma moeda acima da altura normal do jogador
+  world.collect(player, { type: 'magnet', x: player.x, y: player.y, size: 38 });
+  const coin = { type: 'coin', x: player.x + 150, y: player.y - 110, size: 28, collected: false };
+  world.collectibles.push(coin);
+
+  for (let i = 0; i < 40 && player.coins === 0; i++) {
+    step(world, player, {});
+  }
+  const atraiuMoeda = player.coins === 1 && player.magnetTimer > 0;
+
+  // Coleta 2X e pega outra moeda
+  world.collect(player, { type: 'double', x: player.x, y: player.y, size: 38 });
+  const coinsAntes = player.coins;
+  world.collect(player, { type: 'coin', x: player.x, y: player.y, size: 28 });
+  const dobrouMoeda = player.coins - coinsAntes === 2;
+
+  check('Ima atrai moeda proxima automaticamente', atraiuMoeda === true, `coins=${player.coins}`);
+  check('Estrela 2X dobra quantidade de moedas coletadas', dobrouMoeda === true, `ganho=${player.coins - coinsAntes}`);
+}
+
+// ============================================================
+console.log('\n=== 27. Turbo e Modo Radical esmagam obstaculos sem perder vida ===');
+{
+  const { world, player } = newRun();
+  world.obstacles.length = 0;
+  player.turboTimer = 120;
+  player.turboDuration = 120;
+  const vidasAntes = player.lives;
+  const ptsAntes = player.score;
+
+  world.obstacles.push({
+    type: 'crate',
+    x: player.x + player.width + 20,
+    y: world.groundY - 58,
+    width: 54,
+    height: 58,
+    damageReason: 'Bateu na caixa',
+    hit: false
+  });
+
+  for (let i = 0; i < 30; i++) step(world, player, {});
+
+  check('esmagou obstaculo no Turbo', player.smashedCount === 1, `smashed=${player.smashedCount}`);
+  check('nao perdeu vida ao esmagar obstaculo', player.lives === vidasAntes, `vidas=${player.lives}`);
+  check('ganhou pontos extras ao esmagar', player.score > ptsAntes + 120, `score+${player.score - ptsAntes}`);
+}
+
+// ============================================================
+console.log('\n=== 28. Near Miss ("QUASE!") e Palavra L-U-I-G-I ===');
+{
+  const { world, player } = newRun();
+  world.obstacles.length = 0;
+  // Passa por cima da caixa bem rente (< 42px) sem encostar
+  world.obstacles.push({
+    type: 'crate',
+    x: player.x + player.width + 60,
+    y: world.groundY - 58,
+    width: 54,
+    height: 58,
+    damageReason: 'Bateu na caixa',
+    hit: false
+  });
+
+  step(world, player, { Space: true });
+  for (let i = 0; i < 45; i++) {
+    // Mantem perto do topo da caixa para passar raspando
+    if (player.bottom > world.groundY - 76 && player.vy > 0) player.vy = -2;
+    step(world, player, {});
+  }
+
+  // Coleta as 5 letras L-U-I-G-I
+  const coinsAntes = player.coins;
+  ['L', 'U', 'I', 'G', 'I'].forEach((ltr, idx) => {
+    world.collect(player, { type: 'letter', letter: ltr, letterIndex: idx, x: player.x, y: player.y, size: 36 });
+  });
+
+  check('registrou Near Miss ao passar raspando sem bater', player.nearMissCount >= 1 && player.lives === VIDAS_INICIAIS,
+    `nearMiss=${player.nearMissCount}`);
+  check('completar L-U-I-G-I deu +25 moedas e ativou Modo Radical',
+    player.coins >= coinsAntes + 25 && player.feverTimer > 0 && player.wordsCompleted === 1,
+    `coins+${player.coins - coinsAntes}, fever=${player.feverTimer}`);
+}
+
+// ============================================================
+console.log('\n=== 29. Gravidade Espacial na Fase 4, Trampolim e Caminho Alto ===');
+{
+  // Compara altura do salto na Fase 1 vs Fase 4 (Cosmica)
+  function maxJumpHeightInStage(stageIdx) {
+    const { world, player } = newRun();
+    player.currentStageIndex = stageIdx;
+    let peak = player.bottom;
+    for (let i = 0; i < 12; i++) step(world, player, { Space: true });
+    for (let i = 0; i < 100; i++) {
+      step(world, player, {});
+      peak = Math.min(peak, player.bottom);
+    }
+    return world.groundY - peak;
+  }
+
+  const hF1 = maxJumpHeightInStage(0);
+  const hF4 = maxJumpHeightInStage(3);
+
+  // Trampolim + Plataforma Elevada
+  const { world, player } = newRun();
+  world.obstacles.length = 0;
+  world.pads.push({ type: 'bounce', x: player.x + 15, y: world.groundY, width: 76, height: 14, used: false, anim: 0 });
+  step(world, player, {});
+  const vyTrampolim = player.vy;
+  const saltouTrampolim = vyTrampolim < -15;
+
+  const elevY = world.groundY - 134;
+  world.elevatedPlatforms.push({ x: player.x - 30, y: elevY, width: 320, height: 18 });
+  player.y = elevY - player.height - 15;
+  player.vy = 6;
+  player.onGround = false;
+  player.prevBottom = player.bottom;
+  for (let i = 0; i < 20 && !player.onGround; i++) step(world, player, {});
+  const pousouElevada = player.onGround && Math.abs(player.bottom - elevY) < 0.01;
+
+  check('Fase 4 (Cosmica) tem gravidade reduzida com salto mais alto', hF4 > hF1 + 15,
+    `F1=${hF1.toFixed(1)}px vs F4=${hF4.toFixed(1)}px`);
+  check('Trampolim lanca o skatista para o alto', saltouTrampolim === true, `vy=${vyTrampolim.toFixed(1)}`);
+  check('Plataforma elevada sustenta o skatista por cima', pousouElevada === true, `bottom=${player.bottom.toFixed(1)} vs elevY=${elevY}`);
+}
+
+// ============================================================
+console.log('\n=== 30. Rig Customizado (genero, pele, cabeca grande) e ProgressionManager ===');
+{
+  const prevCharMgr = sandbox.characterManager;
+  load('js/character_manager.js');
+
+  let nanCalls = 0;
+  const spyCtx = new Proxy(mockCtx(), {
+    get(target, prop) {
+      const val = target[prop];
+      if (typeof val === 'function') {
+        return (...args) => {
+          for (const a of args) {
+            if (typeof a === 'number' && !Number.isFinite(a)) nanCalls++;
+          }
+          return val.apply(target, args);
+        };
+      }
+      return val;
+    }
+  });
+
+  sandbox.characterManager.getSelected = () => ({
+    id: 'luna_test',
+    bodyStyle: 'custom',
+    gender: 'girl',
+    skinTone: 'brown',
+    outfit: 'pink_cyan',
+    hairColor: 'pink',
+    accessory: 'crown',
+    headSize: 'large',
+    hasPhoto: true,
+    width: 105,
+    height: 130,
+    duckHeight: 85
+  });
+  sandbox.characterManager.getHeadImage = () => ({ width: 256, height: 256 });
+
+  let renderOk = true;
+  try {
+    const { world, player } = newRun();
+    for (const sport of ['skate', 'bmx', 'scooter', 'skates']) {
+      player.setSport(sport);
+      step(world, player, { ArrowRight: true });
+      player.draw(spyCtx);
+      step(world, player, { Space: true });
+      step(world, player, { KeyZ: true });
+      player.draw(spyCtx);
+    }
+  } catch (_) {
+    renderOk = false;
+  } finally {
+    sandbox.characterManager = prevCharMgr;
+  }
+
+  // Testa ProgressionManager: compra na oficina, item lendario e Bau de Nivel
+  const pm = new sandbox.ProgressionManager();
+  pm.data.coinsBank = 500;
+  const buyRes = pm.buyItem('gear', 'neon'); // 250 moedas
+  const prismaItem = sandbox.SHOP_CATALOG.gear.find(g => g.id === 'prisma');
+  const prismaBlocked = pm.buyItem('gear', 'prisma'); // exige 3000 moedas
+  const lvlInicial = pm.getRankLevel();
+  const multInicial = pm.getScoreMultiplier();
+
+  for (const m of pm.data.activeMissions) {
+    pm.recordRunEvent(m.type, m.target + 1, { stageIndex: 0 });
+  }
+  const subiuNivel = pm.getRankLevel() === lvlInicial + 1;
+  const multSubiu = pm.getScoreMultiplier() > multInicial;
+
+  // Testa atalhos de manobra no PC (Shift e 2o toque em ArrowUp no ar)
+  let shiftFezManobra = false;
+  let upFezManobra = false;
+  {
+    const { world, player } = newRun();
+    step(world, player, { Space: true });
+    step(world, player, {});
+    step(world, player, { ShiftLeft: true });
+    shiftFezManobra = player.tricksInAir.length >= 1;
+  }
+  {
+    const { world, player } = newRun();
+    step(world, player, { ArrowUp: true });
+    step(world, player, {});
+    step(world, player, { ArrowUp: true });
+    upFezManobra = player.tricksInAir.length >= 1;
+  }
+
+  check('Rig Customizado renderiza nos 4 esportes sem erros nem NaN', renderOk && nanCalls === 0, `nan=${nanCalls}`);
+  check('Oficina compra item e atualiza equipamento/saldo', buyRes.ok === true && pm.data.equipped.gear === 'neon');
+  check('Item lendario Prisma custa 3000 e exige saldo suficiente',
+    Boolean(prismaItem && prismaItem.price === 3000 && prismaBlocked.ok === false && prismaBlocked.reason === 'insufficient_coins'));
+  check('Atalhos Shift e 2o toque em Seta Cima executam manobra no ar', shiftFezManobra && upFezManobra,
+    `shift=${shiftFezManobra} up2=${upFezManobra}`);
+  check('Concluir 3 missoes abre Bau, sobe Nivel e aumenta multiplicador', subiuNivel && multSubiu,
+    `nivel=${pm.getRankLevel()} mult=${pm.getScoreMultiplier().toFixed(1)}`);
+}
+
+// ============================================================
+console.log('\n=== 31. Dificuldade Facil vs Dificil (abismo vs obstaculos) ===');
+{
+  // Modo Dificil: obstaculo tira 1 vida por vez, mas cair no buraco encerra a partida toda
+  const { world, player } = newRun();
+  player.reset(world, { gameMode: 'classic', difficulty: 'hard' });
+  world.obstacles.length = 0;
+
+  player.takeDamage('Bateu na caixa');
+  const perdeuUmaNoObstaculo = player.lives === VIDAS_INICIAIS - 1 && !player.isGameOver;
+
+  // Agora cai no abismo com 2 vidas restantes -> morre na hora (0 vidas)
+  player.invincibleTimer = 0;
+  player.y = world.deathY + 20;
+  step(world, player, {});
+  const morreuNoAbismoDificil = player.isGameOver === true && player.lives === 0;
+
+  // Modo Facil: cair no abismo perde apenas 1 vida e resgata
+  const easyRun = newRun();
+  easyRun.player.reset(easyRun.world, { gameMode: 'classic', difficulty: 'easy' });
+  easyRun.player.y = easyRun.world.deathY + 20;
+  step(easyRun.world, easyRun.player, {});
+  const resgatouNoFacil = easyRun.player.isGameOver === false && easyRun.player.lives === VIDAS_INICIAIS - 1;
+
+  check('Dificil: bater em obstaculo tira apenas 1 vida', perdeuUmaNoObstaculo, `vidas=${player.lives}`);
+  check('Dificil: cair no buraco perde todas as vidas e encerra partida', morreuNoAbismoDificil,
+    `isGameOver=${player.isGameOver} vidas=${player.lives}`);
+  check('Facil: cair no buraco perde 1 vida e faz resgate', resgatouNoFacil,
+    `isGameOver=${easyRun.player.isGameOver} vidas=${easyRun.player.lives}`);
 }
 
 console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);

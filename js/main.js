@@ -300,6 +300,27 @@ class Game {
     this.leaderboardTab = 'global';
     this._popTimers = {};
 
+    this.selectedMode = 'classic';
+    this.selectedDifficulty = (() => {
+      try { return localStorage.getItem('luigi_skate_difficulty') === 'hard' ? 'hard' : 'easy'; }
+      catch (_) { return 'easy'; }
+    })();
+    this.selectedStage = 0;
+    this.shopTab = 'gear';
+    this.leaderboardSportFilter = 'all';
+    this._cachedLeaderboardList = [];
+    this._cachedLbContainer = 'main-leaderboard-list';
+    this._coinsBankedThisRun = false;
+    this._toastQueue = [];
+    this._toastBusy = false;
+    this._toastTimer = null;
+    this._hintTimer = null;
+    this._bannerTimer = null;
+    this._swipeTimers = new Set();
+    this._lbReqSeq = {};
+    this._runId = 0;
+    this._prevLivesCount = null;
+
     this.el = {
       score:             document.getElementById('hud-score'),
       distance:          document.getElementById('hud-distance'),
@@ -308,6 +329,10 @@ class Game {
       speedBar:          document.getElementById('hud-speed-bar'),
       coins:             document.getElementById('hud-coins'),
       lives:             document.getElementById('hud-lives'),
+      avatar:            document.getElementById('hud-avatar'),
+      word:              document.getElementById('hud-word'),
+      timerChip:         document.getElementById('hud-timer-chip'),
+      timer:             document.getElementById('hud-timer'),
       highscore:         document.getElementById('hud-highscore'),
       stageIcon:         document.getElementById('hud-stage-icon'),
       stageTitle:        document.getElementById('hud-stage-title'),
@@ -316,14 +341,22 @@ class Game {
       stageBannerIcon:   document.getElementById('stage-banner-icon'),
       stageBannerTitle:  document.getElementById('stage-banner-title'),
       stageBannerName:   document.getElementById('stage-banner-name'),
+      stageBannerReward: document.getElementById('stage-banner-reward'),
       combo:             document.getElementById('combo-display'),
       comboMult:         document.getElementById('combo-multiplier'),
       comboAction:       document.getElementById('combo-action'),
       comboPoints:       document.getElementById('combo-points'),
+      fever:             document.getElementById('fever-meter'),
+      feverLabel:        document.getElementById('fever-meter-label'),
       turbo:             document.getElementById('turbo-meter'),
       shield:            document.getElementById('shield-meter'),
+      magnet:            document.getElementById('magnet-meter'),
+      double:            document.getElementById('double-meter'),
+      toastStack:        document.getElementById('toast-stack'),
+      desktopTrickBar:   document.getElementById('desktop-trick-bar'),
       flash:             document.getElementById('screen-flash'),
       runHint:           document.getElementById('run-hint'),
+      registerBox:       document.getElementById('gameover-register-box'),
       playerNameInput:   document.getElementById('leaderboard-name-input'),
       btnSaveScore:      document.getElementById('btn-save-score'),
       registerFeedback:  document.getElementById('register-feedback')
@@ -357,7 +390,8 @@ class Game {
    */
   resize() {
     const rect = this.canvas.getBoundingClientRect();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const dpr = Math.min(isCoarse ? 1.25 : 1.5, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round((rect.width || VIEW.W) * dpr));
     const h = Math.max(1, Math.round((rect.height || VIEW.H) * dpr));
 
@@ -390,32 +424,84 @@ class Game {
 
   initInputs() {
     const blocked = ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    const isTextInput = (el) => {
+      if (!el) return false;
+      if (el.isContentEditable) return true;
+      const tag = el.tagName;
+      if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (tag === 'INPUT') {
+        const t = (el.type || 'text').toLowerCase();
+        return !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'file'].includes(t);
+      }
+      return false;
+    };
+    const isInteractiveFocus = (el, allowedIds = []) => {
+      if (!el || el === document.body || el === this.wrapper) return false;
+      if (el.id && allowedIds.includes(el.id)) return false;
+      const tag = el.tagName;
+      return tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.getAttribute('role') === 'button';
+    };
 
     window.addEventListener('keydown', (e) => {
-      if (blocked.includes(e.code)) e.preventDefault();
+      const target = e.target || document.activeElement;
+      if (isTextInput(target)) {
+        if (e.code === 'Escape' && target.blur) target.blur();
+        return;
+      }
+
+      if (this.state === 'PLAYING' && blocked.includes(e.code)) {
+        e.preventDefault();
+      }
       if (e.repeat) return;
 
-      this.input.down(e.code);
+      if (this.state === 'PLAYING') {
+        this.input.down(e.code);
+      }
       window.soundSystem.init();
 
-      if (e.code === 'KeyP' || e.code === 'Escape') {
+      if (e.code === 'KeyP') {
         if (this.state === 'PLAYING') this.pauseGame();
         else if (this.state === 'PAUSED') this.resumeGame();
+      }
+
+      if (e.code === 'Escape') {
+        if (this.state === 'PLAYING') {
+          this.pauseGame();
+        } else if (this.state === 'PAUSED') {
+          this.resumeGame();
+        } else if (this.state === 'CREATOR' && this.isCreatorCameraOpen && this.isCreatorCameraOpen()) {
+          if (this.stopCreatorCamera) this.stopCreatorCamera();
+        } else if (['SHOP', 'MISSIONS', 'SELECT_CHAR', 'CREATOR', 'LEADERBOARD', 'HOW_TO_PLAY'].includes(this.state)) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.setState('MENU');
+        }
       }
 
       if (e.code === 'KeyM') this.toggleMute();
 
       if (e.code === 'Enter') {
+        const activeEl = document.activeElement;
         if (this.state === 'GAME_OVER') {
-          // Não dispara se o foco estiver no campo de nome (deixa o form enviar normalmente)
-          if (document.activeElement !== this.el.playerNameInput) {
+          if (!isInteractiveFocus(activeEl, ['btn-restart'])) {
+            e.preventDefault();
             this.flushOnlineScoreIfNeeded();
             this.startPlay();
           }
-        } else if (this.state === 'MENU' || this.state === 'SELECT_CHAR') {
-          this.startPlay();
+        } else if (this.state === 'MENU') {
+          if (!isInteractiveFocus(activeEl, ['btn-play'])) {
+            e.preventDefault();
+            this.startPlay();
+          }
+        } else if (this.state === 'SELECT_CHAR') {
+          if (!isInteractiveFocus(activeEl, ['btn-select-and-play'])) {
+            e.preventDefault();
+            this.startPlay();
+          }
         } else if (this.state === 'PAUSED') {
-          this.resumeGame();
+          if (!isInteractiveFocus(activeEl, ['btn-resume'])) {
+            e.preventDefault();
+            this.resumeGame();
+          }
         }
       }
     });
@@ -437,6 +523,50 @@ class Game {
     this.bindTouch('touch-trick-1', 'KeyZ');
     this.bindTouch('touch-trick-2', 'KeyX');
     this.bindTouch('touch-trick-3', 'KeyC');
+    this.bindTouch('desk-trick-1', 'KeyZ');
+    this.bindTouch('desk-trick-2', 'KeyX');
+    this.bindTouch('desk-trick-3', 'KeyC');
+    this.bindCanvasSwipes();
+  }
+
+  /** Gestos touch (swipe para cima/baixo/direita) direto no canvas durante o jogo. */
+  bindCanvasSwipes() {
+    if (!this.canvas) return;
+    let startX = 0, startY = 0, active = false;
+    const pulseKey = (code, ms) => {
+      this.input.down(code);
+      const t = setTimeout(() => {
+        this._swipeTimers.delete(t);
+        this.input.up(code);
+      }, ms);
+      this._swipeTimers.add(t);
+    };
+
+    this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.state !== 'PLAYING' || e.pointerType === 'mouse') return;
+      active = true;
+      startX = e.clientX;
+      startY = e.clientY;
+    }, { passive: true });
+
+    this.canvas.addEventListener('pointermove', (e) => {
+      if (!active || this.state !== 'PLAYING') return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.hypot(dx, dy) < 28) return;
+      active = false;
+      window.soundSystem.init();
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        if (dy < 0) pulseKey('Space', 180);
+        else pulseKey('ArrowDown', 340);
+      } else if (dx > 0) {
+        pulseKey('TouchAccelerate', 420);
+      }
+    }, { passive: true });
+
+    const cancel = () => { active = false; };
+    this.canvas.addEventListener('pointerup', cancel, { passive: true });
+    this.canvas.addEventListener('pointercancel', cancel, { passive: true });
   }
 
   bindTouch(id, code) {
@@ -447,7 +577,8 @@ class Game {
       e.preventDefault();
       window.soundSystem.init();
       btn.classList.add('is-pressed');
-      this.input.down(code);
+      if (this.state === 'PLAYING') this.input.down(code);
+      if (document.activeElement === btn && btn.blur) btn.blur();
       if (btn.setPointerCapture && e.pointerId !== undefined) {
         try { btn.setPointerCapture(e.pointerId); } catch (_) {}
       }
@@ -456,6 +587,7 @@ class Game {
       e.preventDefault();
       btn.classList.remove('is-pressed');
       this.input.up(code);
+      if (document.activeElement === btn && btn.blur) btn.blur();
     };
 
     btn.addEventListener('pointerdown', down);
@@ -470,30 +602,66 @@ class Game {
   // ==========================================================
 
   initUI() {
-    const on = (id, fn, soundKind = 'click') => {
+    const on = (id, fn, soundKind = 'click', { blur = false } = {}) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', () => {
         window.soundSystem.init();
         if (soundKind && window.soundSystem.playUI) window.soundSystem.playUI(soundKind);
+        if (blur && el.blur) el.blur();
         fn();
       });
     };
 
     on('btn-play', () => this.startPlay());
     on('btn-select-char', () => this.showCharacterSelect());
-    on('btn-character-creator', () => this.setState('CREATOR'));
+    on('btn-character-creator', () => this.openCreator());
+    on('btn-shop', () => this.showShop());
+    on('btn-missions', () => this.showMissions());
+    on('btn-footer-missions', () => this.showMissions());
+    on('btn-gameover-shop', () => { this.flushOnlineScoreIfNeeded(); this.showShop(); });
     on('btn-leaderboard', () => this.showLeaderboard());
     on('btn-how-to-play', () => this.setState('HOW_TO_PLAY'));
     on('btn-clear-leaderboard', () => this.clearLeaderboard(), 'back');
     on('btn-select-and-play', () => this.startPlay());
-    on('btn-pause-hud', () => this.pauseGame());
+    on('btn-pause-hud', () => this.pauseGame(), 'click', { blur: true });
     on('btn-resume', () => this.resumeGame());
+    on('btn-pause-restart', () => { this.bankCoinsIfNeeded(); this.startPlay(); });
     on('btn-pause-menu', () => this.setState('MENU'), 'back');
     on('btn-restart', () => { this.flushOnlineScoreIfNeeded(); this.startPlay(); });
     on('btn-gameover-menu', () => { this.flushOnlineScoreIfNeeded(); this.setState('MENU'); }, 'back');
-    on('btn-mute-hud', () => this.toggleMute(), null);
+    on('btn-mute-hud', () => this.toggleMute(), null, { blur: true });
     on('tab-lb-global', () => this.switchLeaderboardTab('global'));
     on('tab-lb-local', () => this.switchLeaderboardTab('local'));
+
+    // Abas da Oficina & Loja
+    document.querySelectorAll('[data-shop-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.shopTab = btn.dataset.shopTab || 'gear';
+        document.querySelectorAll('[data-shop-tab]').forEach(b => {
+          const active = b === btn;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        this.renderShop();
+      });
+    });
+
+    // Filtro de esporte no Placar
+    document.querySelectorAll('#lb-sport-filter [data-lb-sport]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.leaderboardSportFilter = btn.dataset.lbSport || 'all';
+        document.querySelectorAll('#lb-sport-filter [data-lb-sport]').forEach(b => {
+          const active = b === btn;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        this.renderLeaderboard(this._cachedLbContainer || 'main-leaderboard-list', this._cachedLeaderboardList);
+      });
+    });
 
     // Salvar / atualizar pontuação com nome no placar (apenas submit evita disparo duplo)
     const form = document.getElementById('form-save-score');
@@ -515,7 +683,88 @@ class Game {
 
     this.syncMuteButton();
     this.initSportSelector();
+    this.initModeAndStageSelectors();
     this.initCreator();
+  }
+
+  initModeAndStageSelectors() {
+    const syncModeUI = () => {
+      document.querySelectorAll('#mode-selector [data-mode]').forEach(b => {
+        const active = (b.dataset.mode || 'classic') === this.selectedMode;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      const diffGroup = document.getElementById('difficulty-selector');
+      if (diffGroup) {
+        diffGroup.classList.toggle('is-muted', this.selectedMode !== 'classic');
+      }
+    };
+
+    const syncDifficultyUI = () => {
+      document.querySelectorAll('#difficulty-selector [data-difficulty]').forEach(b => {
+        const active = (b.dataset.difficulty || 'easy') === this.selectedDifficulty;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    };
+
+    document.querySelectorAll('#mode-selector [data-mode]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.selectedMode = btn.dataset.mode || 'classic';
+        syncModeUI();
+      });
+    });
+
+    document.querySelectorAll('#difficulty-selector [data-difficulty]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.selectedDifficulty = btn.dataset.difficulty === 'hard' ? 'hard' : 'easy';
+        try { localStorage.setItem('luigi_skate_difficulty', this.selectedDifficulty); } catch (_) {}
+        if (this.selectedMode !== 'classic') {
+          this.selectedMode = 'classic';
+          syncModeUI();
+        }
+        syncDifficultyUI();
+      });
+    });
+
+    syncModeUI();
+    syncDifficultyUI();
+
+    document.querySelectorAll('#stage-selector [data-stage]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        window.soundSystem.init();
+        const st = parseInt(btn.dataset.stage || '0', 10) || 0;
+        const unlocked = window.progressionManager ? window.progressionManager.getUnlockedStageIndex() : 0;
+        if (st > unlocked) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          const stageObj = window.STAGES && window.STAGES[st];
+          const distNeed = stageObj ? stageObj.dist : st * 600;
+          this.showToast({
+            icon: '🔒',
+            title: `Fase ${st + 1} bloqueada`,
+            subtitle: `Alcance ${formatNumber(distNeed)}m em uma corrida!`,
+            info: true
+          });
+          return;
+        }
+        if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.selectedStage = st;
+        document.querySelectorAll('#stage-selector [data-stage]').forEach(b => {
+          const active = b === btn;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+      });
+    });
+  }
+
+  openCreator() {
+    this.setState('CREATOR');
+    if (this._refreshCreatorScreen) this._refreshCreatorScreen();
   }
 
   getSportInfo(sportId) {
@@ -564,9 +813,13 @@ class Game {
     const playIcon = document.getElementById('btn-play-icon');
     if (playIcon) playIcon.textContent = sport.icon;
 
-    // Atualiza os rótulos dos botões touch de manobra conforme o esporte
+    // Atualiza os rótulos dos botões de manobra (mobile e desktop) conforme o esporte
     const labels = sport.touchLabels || ['FLIP', '360°', 'GRAB'];
     ['touch-trick-1-label', 'touch-trick-2-label', 'touch-trick-3-label'].forEach((id, i) => {
+      const el = document.getElementById(id);
+      if (el && labels[i]) el.textContent = labels[i];
+    });
+    ['desk-trick-1-label', 'desk-trick-2-label', 'desk-trick-3-label'].forEach((id, i) => {
       const el = document.getElementById(id);
       if (el && labels[i]) el.textContent = labels[i];
     });
@@ -584,12 +837,27 @@ class Game {
   }
 
   setState(state) {
+    const prevState = this.state;
+
+    // Garante envio automático da pontuação online ao sair da tela de Fim de Jogo por qualquer caminho
+    if (prevState === 'GAME_OVER' && state !== 'GAME_OVER') {
+      this.flushOnlineScoreIfNeeded();
+    }
+
+    // Ao sair da partida (via Pausa ou diretamente) para o Menu, salva moedas coletadas (ex.: Treino Livre)
+    if ((prevState === 'PLAYING' || prevState === 'PAUSED') && state === 'MENU') {
+      this.bankCoinsIfNeeded(true);
+      this.clearGameplayTimersAndOverlays({ clearToasts: false });
+    }
+
     this.state = state;
     this.wrapper.dataset.state = state;
 
     const screens = {
       LOADING:      'screen-loading',
       MENU:         'screen-menu',
+      SHOP:         'screen-shop',
+      MISSIONS:     'screen-missions',
       SELECT_CHAR:  'screen-character-select',
       CREATOR:      'screen-character-creator',
       LEADERBOARD:  'screen-leaderboard',
@@ -601,16 +869,34 @@ class Game {
 
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
     const target = screens[state];
-    if (target) document.getElementById(target).classList.remove('hidden');
+    if (target) {
+      const targetEl = document.getElementById(target);
+      if (targetEl) {
+        targetEl.classList.remove('hidden');
+        targetEl.scrollTop = 0;
+      }
+    }
 
     if (state !== 'CREATOR' && this.stopCreatorCamera) {
       this.stopCreatorCamera();
     }
 
     if (state === 'MENU') {
+      if (window.soundSystem) {
+        if (window.soundSystem.stopMusic) window.soundSystem.stopMusic();
+        if (window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
+      }
+      // Recompõe a cena de fundo limpa ao voltar de uma partida pausada ou encerrada
+      if (prevState === 'PAUSED' || prevState === 'GAME_OVER' || prevState === 'PLAYING') {
+        this.world.reset();
+        if (this.player.setSport) this.player.setSport(this.selectedSport);
+        this.player.reset(this.world);
+        this.camera.reset();
+        if (window.particleSystem && window.particleSystem.clear) window.particleSystem.clear();
+      }
       this.refreshMenuInfo();
-      if (window.soundSystem && window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
       delete this.wrapper.dataset.speedFx;
+      delete this.wrapper.dataset.fever;
     }
   }
 
@@ -620,6 +906,233 @@ class Game {
     if (hs) hs.textContent = formatNumber(this.highScore);
     const char = window.characterManager.getSelected();
     if (cc && char) cc.textContent = char.name;
+
+    const pm = window.progressionManager;
+    if (pm) {
+      const coinsEl = document.getElementById('menu-coins');
+      const rankEl = document.getElementById('menu-rank');
+      const rankTitleEl = document.getElementById('menu-rank-title');
+      const multEl = document.getElementById('menu-mult');
+      const misEl = document.getElementById('menu-missions-summary');
+      const dotEl = document.getElementById('shop-notif-dot');
+
+      if (coinsEl) coinsEl.textContent = formatNumber(pm.getCoins());
+      if (rankEl) rankEl.textContent = String(pm.getRankLevel());
+      if (rankTitleEl) rankTitleEl.textContent = pm.getRankTitle();
+      if (multEl) multEl.textContent = 'x' + pm.getScoreMultiplier().toFixed(1) + ' pts';
+      if (misEl) {
+        const doneCount = (pm.data.activeMissions || []).filter(m => m.done).length;
+        misEl.textContent = `${doneCount}/3`;
+      }
+      if (dotEl) dotEl.hidden = !pm.canAffordAnyNewItem();
+
+      const unlocked = pm.getUnlockedStageIndex();
+      if (this.selectedStage > unlocked) this.selectedStage = 0;
+      document.querySelectorAll('#stage-selector [data-stage]').forEach(btn => {
+        const st = parseInt(btn.dataset.stage || '0', 10) || 0;
+        const locked = st > unlocked;
+        const active = st === this.selectedStage;
+        btn.classList.toggle('is-locked', locked);
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+    }
+  }
+
+  // ==========================================================
+  // Oficina & Loja + Missões & Troféus
+  // ==========================================================
+
+  showShop(tabOverride) {
+    if (tabOverride) {
+      this.shopTab = tabOverride;
+      document.querySelectorAll('[data-shop-tab]').forEach(b => {
+        const active = b.dataset.shopTab === this.shopTab;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+    }
+    this.setState('SHOP');
+    this.renderShop();
+  }
+
+  renderShop() {
+    const pm = window.progressionManager;
+    const cat = window.SHOP_CATALOG;
+    const grid = document.getElementById('shop-grid');
+    const coinsEl = document.getElementById('shop-coins');
+    if (!pm || !cat || !grid) return;
+    if (coinsEl) coinsEl.textContent = formatNumber(pm.getCoins());
+
+    const playUnlockSound = () => {
+      if (!window.soundSystem) return;
+      if (typeof window.soundSystem.playChestOpen === 'function') window.soundSystem.playChestOpen();
+      else if (typeof window.soundSystem.playPowerup === 'function') window.soundSystem.playPowerup();
+    };
+
+    const tab = this.shopTab || 'gear';
+    grid.innerHTML = '';
+
+    if (tab === 'upgrades') {
+      cat.upgrades.forEach(upg => {
+        const lvl = pm.getUpgradeLevel(upg.id);
+        const maxLvl = upg.costs.length;
+        const isMax = lvl >= maxLvl;
+        const cost = isMax ? 0 : upg.costs[lvl];
+        const canBuy = !isMax && pm.getCoins() >= cost;
+
+        const card = document.createElement('div');
+        card.className = 'shop-card' + (!isMax && cost >= 1600 ? ' shop-card--legendary' : '');
+        let pipsHtml = '';
+        for (let i = 0; i < maxLvl; i++) {
+          pipsHtml += `<span class="${i < lvl ? 'on' : ''}"></span>`;
+        }
+        card.innerHTML = `
+          <div class="shop-card-top">
+            <span class="shop-card-icon">${upg.icon}</span>
+            <span class="leaderboard-badge">Nv. ${lvl}/${maxLvl}</span>
+          </div>
+          <h4>${escapeHtml(upg.name)}</h4>
+          <p>${escapeHtml(upg.desc)}</p>
+          <div class="shop-level-pips">${pipsHtml}</div>
+          <button type="button" class="btn btn-sm ${isMax ? 'btn-quiet' : (canBuy ? 'btn-primary' : 'btn-ghost')}" ${isMax || !canBuy ? 'disabled' : ''}>
+            ${isMax ? 'Nível Máximo ✓' : `Melhorar · ${formatNumber(cost)} 🪙`}
+          </button>
+        `;
+        const btn = card.querySelector('button');
+        if (btn && !isMax) {
+          btn.addEventListener('click', () => {
+            const res = pm.buyUpgrade(upg.id);
+            if (res.ok) {
+              playUnlockSound();
+              if (res.notifications?.length) this.onProgressionNotifications(res.notifications);
+              this.renderShop();
+            }
+          });
+        }
+        grid.appendChild(card);
+      });
+      return;
+    }
+
+    const items = cat[tab] || [];
+    items.forEach(item => {
+      const owned = pm.isOwned(tab, item.id);
+      let equipped = false;
+      if (tab === 'gear') equipped = pm.data.equipped.gear === item.id;
+      else if (tab === 'trails') equipped = pm.data.equipped.trail === item.id;
+      else if (tab === 'accessories') equipped = pm.data.equipped.accessory === item.id;
+      else if (tab === 'characters') equipped = window.characterManager.selectedId === item.id;
+
+      const canBuy = pm.getCoins() >= item.price;
+      const isLegendary = item.price >= 1800;
+      const card = document.createElement('div');
+      card.className = 'shop-card' + (isLegendary ? ' shop-card--legendary' : '') + (equipped ? ' is-equipped' : '');
+
+      let swatchHtml = '';
+      if (tab === 'gear') {
+        swatchHtml = `<div class="shop-swatch-bar">
+          <span class="shop-swatch-dot" style="background:${item.primary}"></span>
+          <span class="shop-swatch-dot" style="background:${item.secondary}"></span>
+          <span class="shop-swatch-dot" style="background:${item.accent}"></span>
+        </div>`;
+      } else if (tab === 'trails' && item.colors) {
+        swatchHtml = `<div class="shop-swatch-bar">${item.colors.slice(0, 4).map(c => `<span class="shop-swatch-dot" style="background:rgb(${c})"></span>`).join('')}</div>`;
+      }
+
+      let btnLabel = `Comprar · ${formatNumber(item.price)} 🪙`;
+      let btnClass = canBuy ? 'btn-primary' : 'btn-ghost';
+      let disabled = !owned && !canBuy;
+      if (equipped) {
+        btnLabel = 'Equipado ✓';
+        btnClass = 'btn-quiet';
+        disabled = true;
+      } else if (owned) {
+        btnLabel = tab === 'characters' ? 'Selecionar' : 'Equipar';
+        btnClass = 'btn-ghost';
+        disabled = false;
+      }
+
+      card.innerHTML = `
+        <div class="shop-card-top">
+          <span class="shop-card-icon">${item.icon || '✨'}</span>
+          ${swatchHtml}
+        </div>
+        <h4>${escapeHtml(item.name)}</h4>
+        <p>${escapeHtml(item.desc || '')}</p>
+        <button type="button" class="btn btn-sm ${btnClass}" ${disabled ? 'disabled' : ''}>${btnLabel}</button>
+      `;
+
+      const btn = card.querySelector('button');
+      if (btn && !disabled) {
+        btn.addEventListener('click', () => {
+          const res = pm.buyItem(tab, item.id);
+          if (res.ok) {
+            if (tab === 'characters') {
+              window.characterManager.select(item.id);
+            }
+            if (owned) window.soundSystem.playCoin();
+            else playUnlockSound();
+            if (res.notifications?.length) this.onProgressionNotifications(res.notifications);
+            this.renderShop();
+          }
+        });
+      }
+      grid.appendChild(card);
+    });
+  }
+
+  showMissions() {
+    this.setState('MISSIONS');
+    this.renderMissions();
+  }
+
+  renderMissions() {
+    const pm = window.progressionManager;
+    if (!pm) return;
+
+    const rankEl = document.getElementById('missions-rank-label');
+    const multEl = document.getElementById('missions-mult-label');
+    const chestEl = document.getElementById('missions-chest-progress');
+    const listEl = document.getElementById('missions-list');
+    const achEl = document.getElementById('achievements-list');
+
+    const missions = pm.data.activeMissions || [];
+    const doneCount = missions.filter(m => m.done).length;
+
+    if (rankEl) rankEl.textContent = `Nível ${pm.getRankLevel()} · ${pm.getRankTitle()}`;
+    if (multEl) multEl.textContent = `Multiplicador permanente: x${pm.getScoreMultiplier().toFixed(1)} pontos`;
+    if (chestEl) chestEl.textContent = `${doneCount} de 3 missões concluídas`;
+
+    if (listEl) {
+      listEl.innerHTML = missions.map(m => {
+        const pct = Math.min(100, Math.round(((m.progress || 0) / Math.max(1, m.target)) * 100));
+        return `
+          <div class="mission-card ${m.done ? 'is-done' : ''}">
+            <div class="mission-info">
+              <strong>${m.done ? '✅ ' : '🎯 '}${escapeHtml(m.label)} (${Math.floor(m.progress || 0)}/${m.target})</strong>
+              <div class="mission-progress-bar"><i style="width:${pct}%"></i></div>
+            </div>
+            <span class="mission-reward">${m.done ? 'Concluída!' : `+${m.reward} 🪙`}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    if (achEl && window.ACHIEVEMENTS_CATALOG) {
+      achEl.innerHTML = window.ACHIEVEMENTS_CATALOG.map(a => {
+        const unlocked = !!(pm.data.achievements && pm.data.achievements[a.id]);
+        return `
+          <div class="achievement-card ${unlocked ? 'unlocked' : ''}">
+            <span class="ach-icon">${unlocked ? a.icon : '🔒'}</span>
+            <div>
+              <strong>${escapeHtml(a.name)}</strong>
+              <small>${escapeHtml(a.desc)} (+${a.reward} 🪙)</small>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
   }
 
   showCharacterSelect() {
@@ -632,17 +1145,27 @@ class Game {
     grid.innerHTML = '';
 
     window.characterManager.characters.forEach(char => {
+      const unlocked = window.characterManager.isCharacterUnlocked(char.id);
       const card = document.createElement('div');
-      card.className = 'char-card' + (char.id === window.characterManager.selectedId ? ' selected' : '');
+      card.className = 'char-card'
+        + (char.id === window.characterManager.selectedId ? ' selected' : '')
+        + (!unlocked ? ' is-locked' : '');
 
       const stats = char.stats || {};
+      const fallbackSrc = (char.sprites && char.sprites.skate) || 'assets/portraits/portrait_luigi_3d.png';
+      const shopEntry = window.SHOP_CATALOG && Array.isArray(window.SHOP_CATALOG.characters)
+        ? window.SHOP_CATALOG.characters.find(c => c.id === char.id)
+        : null;
+      const unlockPrice = (shopEntry && shopEntry.price) || char.unlockPrice || 750;
+      const badgeText = unlocked ? (char.badge || 'Skatista') : `🔒 ${formatNumber(unlockPrice)} 🪙 na Oficina`;
+
       card.innerHTML = `
         <span class="char-check">✓</span>
-        ${char.isCustom ? '<button class="char-delete" title="Remover personagem">✕</button>' : ''}
-        <img class="char-avatar" src="${char.portrait}" alt="${escapeHtml(char.name)}"
-             onerror="this.src='${char.sprites.skate}'">
+        ${char.isCustom ? '<button type="button" class="char-delete" title="Remover personagem" aria-label="Remover personagem">✕</button>' : ''}
+        <img class="char-avatar" src="${escapeHtml(char.portrait || fallbackSrc)}" alt="${escapeHtml(char.name)}"
+             onerror="this.onerror=null;this.src='${escapeHtml(fallbackSrc)}'">
         <div class="char-name">${escapeHtml(char.name)}</div>
-        <div class="char-badge">${escapeHtml(char.badge || 'Skatista')}</div>
+        <div class="char-badge">${escapeHtml(badgeText)}</div>
         <div class="char-desc">${escapeHtml(char.description || '')}</div>
         <div class="char-stats">
           <div class="char-stat"><span>Velocidade</span><b>${escapeHtml(stats.velocidade || 'Alta')}</b></div>
@@ -652,6 +1175,10 @@ class Game {
       `;
 
       card.addEventListener('click', () => {
+        if (!unlocked) {
+          this.showShop('characters');
+          return;
+        }
         window.characterManager.select(char.id);
         window.soundSystem.playCoin();
         this.renderCharacterCards();
@@ -689,16 +1216,34 @@ class Game {
 
     const btnGallery = document.getElementById('btn-creator-gallery');
     const btnCamera = document.getElementById('btn-creator-camera');
+    const btnNoPhoto = document.getElementById('btn-creator-nophoto');
     const cameraBox = document.getElementById('creator-camera-box');
     const cameraVideo = document.getElementById('creator-camera-video');
     const cameraError = document.getElementById('creator-camera-error');
     const btnCapture = document.getElementById('btn-camera-capture');
     const btnFlipCam = document.getElementById('btn-camera-flip');
     const btnCancelCam = document.getElementById('btn-camera-cancel');
+    const fullBodyPreview = document.getElementById('preview-fullbody-img');
+    const photoSlidersBox = document.getElementById('creator-photo-sliders');
+
+    const skinRow = document.getElementById('creator-skin-row');
+    const outfitRow = document.getElementById('creator-outfit-row');
+    const hairRow = document.getElementById('creator-hair-row');
+    const accRow = document.getElementById('creator-accessory-row');
 
     let loadedRawImg = null;
     let cameraStream = null;
+    let cameraRequestId = 0;
     let facingMode = 'user';
+
+    const customState = {
+      headSize: 'large',
+      gender: 'boy',
+      skinTone: 'fair',
+      outfit: 'street_blue',
+      hairColor: 'brown',
+      accessory: 'none'
+    };
 
     const showCameraError = (msg) => {
       if (!cameraError) return;
@@ -711,9 +1256,15 @@ class Game {
       }
     };
 
+    const stopStreamTracks = (stream) => {
+      if (!stream) return;
+      stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+    };
+
     const stopCamera = () => {
+      cameraRequestId++;
       if (cameraStream) {
-        cameraStream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+        stopStreamTracks(cameraStream);
         cameraStream = null;
       }
       if (cameraVideo) cameraVideo.srcObject = null;
@@ -721,6 +1272,8 @@ class Game {
       if (dropArea) dropArea.hidden = false;
     };
     this.stopCreatorCamera = stopCamera;
+    this.isCreatorCameraOpen = () => !!(cameraStream || (cameraBox && !cameraBox.hidden));
+    window.addEventListener('pagehide', stopCamera);
 
     const startCamera = async () => {
       showCameraError('');
@@ -733,9 +1286,11 @@ class Game {
         return;
       }
       stopCamera();
+      const reqId = ++cameraRequestId;
+      let stream = null;
       try {
         try {
-          cameraStream = await navigator.mediaDevices.getUserMedia({
+          stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode, width: { ideal: 640 }, height: { ideal: 480 } },
             audio: false
           });
@@ -745,8 +1300,15 @@ class Game {
             throw firstErr;
           }
           // Fallback universal para webcams de PC/notebook que rejeitam facingMode/resolução
-          cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         }
+
+        // Se o jogador saiu do Estúdio ou cancelou enquanto aguardava a permissão, encerra o stream imediatamente!
+        if (reqId !== cameraRequestId || this.state !== 'CREATOR') {
+          stopStreamTracks(stream);
+          return;
+        }
+        cameraStream = stream;
 
         if (cameraBox) cameraBox.hidden = false;
         if (dropArea) dropArea.hidden = true;
@@ -762,10 +1324,16 @@ class Game {
             cameraVideo.addEventListener('loadedmetadata', onReady);
             setTimeout(resolve, 1200);
           });
+          if (reqId !== cameraRequestId || this.state !== 'CREATOR') {
+            stopCamera();
+            return;
+          }
           await cameraVideo.play().catch(() => {});
         }
       } catch (err) {
+        if (stream) stopStreamTracks(stream);
         stopCamera();
+        if (this.state !== 'CREATOR') return;
         const name = (err && err.name) || '';
         if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
           showCameraError('Permissão da câmera negada. Libere o acesso à câmera no navegador ou clique em "Escolher foto".');
@@ -785,31 +1353,172 @@ class Game {
       faceZoom: zoomInput ? parseFloat(zoomInput.value) || 1.15 : 1.15,
       faceFlipX: flipInput ? !!flipInput.checked : false,
       useHelmet: helmetInput ? !!helmetInput.checked : true,
-      fullPhoto: fullPhotoInput ? !!fullPhotoInput.checked : false
+      fullPhoto: fullPhotoInput ? !!fullPhotoInput.checked : false,
+      headSize: customState.headSize,
+      gender: customState.gender,
+      skinTone: customState.skinTone,
+      outfit: customState.outfit,
+      hairColor: customState.hairColor,
+      accessory: customState.accessory
     });
 
     const syncSliderState = () => {
-      const isFull = fullPhotoInput && fullPhotoInput.checked;
+      const isFull = fullPhotoInput && fullPhotoInput.checked && !!loadedRawImg;
       [faceXInput, faceYInput, zoomInput].forEach(inp => {
-        if (inp && inp.parentElement) inp.parentElement.classList.toggle('is-disabled', !!isFull);
+        if (inp && inp.parentElement) inp.parentElement.classList.toggle('is-disabled', !!isFull || !loadedRawImg);
       });
       if (helmetInput && helmetInput.parentElement) {
         helmetInput.parentElement.classList.toggle('is-disabled', !!isFull);
+      }
+      if (fullPhotoInput && fullPhotoInput.parentElement) {
+        fullPhotoInput.parentElement.classList.toggle('is-disabled', !loadedRawImg);
+      }
+      if (photoSlidersBox) {
+        photoSlidersBox.classList.toggle('is-no-photo', !loadedRawImg);
       }
       if (dragHint) dragHint.hidden = !loadedRawImg || !!isFull;
     };
 
     const refreshPreview = () => {
       syncSliderState();
-      if (!loadedRawImg) return;
+      const opts = getOptions();
+      if (fullBodyPreview && window.characterManager.buildFullBodyPreview) {
+        try {
+          fullBodyPreview.src = window.characterManager.buildFullBodyPreview(loadedRawImg, opts);
+        } catch (_) {}
+      }
+      if (!loadedRawImg) {
+        preview.hidden = true;
+        prompt.style.display = '';
+        dropArea.classList.remove('has-photo');
+        return;
+      }
       try {
-        preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, getOptions());
+        preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, opts);
       } catch (_) {
         preview.src = loadedRawImg.src || '';
       }
       preview.hidden = false;
       prompt.style.display = 'none';
       dropArea.classList.add('has-photo');
+    };
+
+    // Popula botões de cor da pele, roupa, cabelo e acessórios desbloqueados
+    const pal = window.CHAR_CUSTOMIZATION;
+    if (pal && skinRow) {
+      skinRow.innerHTML = '';
+      pal.SKIN_TONES.forEach(s => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'swatch-btn' + (customState.skinTone === s.id ? ' active' : '');
+        b.style.background = s.hex;
+        b.title = s.name;
+        b.addEventListener('click', () => {
+          customState.skinTone = s.id;
+          skinRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          refreshPreview();
+        });
+        skinRow.appendChild(b);
+      });
+    }
+    if (pal && outfitRow) {
+      outfitRow.innerHTML = '';
+      pal.OUTFITS.forEach(o => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'swatch-btn' + (customState.outfit === o.id ? ' active' : '');
+        b.style.background = `linear-gradient(135deg, ${o.top} 55%, ${o.topAccent} 55%)`;
+        b.title = o.name;
+        b.addEventListener('click', () => {
+          customState.outfit = o.id;
+          outfitRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          refreshPreview();
+        });
+        outfitRow.appendChild(b);
+      });
+    }
+    if (pal && hairRow) {
+      hairRow.innerHTML = '';
+      pal.HAIR_COLORS.forEach(h => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'swatch-btn' + (customState.hairColor === h.id ? ' active' : '');
+        b.style.background = h.hex;
+        b.title = h.name;
+        b.addEventListener('click', () => {
+          customState.hairColor = h.id;
+          hairRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          refreshPreview();
+        });
+        hairRow.appendChild(b);
+      });
+    }
+
+    const refreshCreatorAccessories = () => {
+      if (!accRow || !window.SHOP_CATALOG) return;
+      const pm = window.progressionManager;
+      accRow.innerHTML = '';
+      const list = window.SHOP_CATALOG.accessories.filter(a => !pm || pm.isOwned('accessories', a.id));
+      if (!list.some(a => a.id === customState.accessory)) customState.accessory = 'none';
+      list.forEach(a => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        const active = customState.accessory === a.id;
+        b.className = 'pill-opt' + (active ? ' active' : '');
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        b.title = a.name;
+        const shortName = a.id === 'none' ? 'Nenhum' : a.name.split(' ')[0];
+        b.textContent = `${a.icon} ${shortName}`;
+        b.addEventListener('click', () => {
+          customState.accessory = a.id;
+          accRow.querySelectorAll('.pill-opt').forEach(x => {
+            const isSel = x === b;
+            x.classList.toggle('active', isSel);
+            x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+          });
+          refreshPreview();
+        });
+        accRow.appendChild(b);
+      });
+    };
+
+    document.querySelectorAll('#creator-headsize-row [data-headsize]').forEach(b => {
+      b.addEventListener('click', () => {
+        customState.headSize = b.dataset.headsize || 'large';
+        document.querySelectorAll('#creator-headsize-row [data-headsize]').forEach(x => {
+          const isSel = x === b;
+          x.classList.toggle('active', isSel);
+          x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+        });
+        refreshPreview();
+      });
+    });
+
+    document.querySelectorAll('#creator-gender-row [data-gender]').forEach(b => {
+      b.addEventListener('click', () => {
+        customState.gender = b.dataset.gender || 'boy';
+        document.querySelectorAll('#creator-gender-row [data-gender]').forEach(x => {
+          const isSel = x === b;
+          x.classList.toggle('active', isSel);
+          x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+        });
+        refreshPreview();
+      });
+    });
+
+    if (btnNoPhoto) {
+      btnNoPhoto.addEventListener('click', () => {
+        stopCamera();
+        loadedRawImg = null;
+        if (fileInput) fileInput.value = '';
+        if (fullPhotoInput) fullPhotoInput.checked = false;
+        refreshPreview();
+      });
+    }
+
+    this._refreshCreatorScreen = () => {
+      refreshCreatorAccessories();
+      refreshPreview();
     };
 
     const setRawImage = (img) => {
@@ -934,24 +1643,28 @@ class Game {
     ['dragleave', 'drop'].forEach(ev =>
       dropArea.addEventListener(ev, (e) => { e.preventDefault(); dropArea.classList.remove('dragover'); }));
 
-    dropArea.addEventListener('drop', (e) => showPreviewFile(e.dataTransfer.files[0]));
+    dropArea.addEventListener('drop', (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) showPreviewFile(f);
+    });
     fileInput.addEventListener('change', (e) => showPreviewFile(e.target.files[0]));
 
-    saveBtn.addEventListener('click', async () => {
-      if (!loadedRawImg) {
-        dropArea.classList.add('dragover');
-        setTimeout(() => dropArea.classList.remove('dragover'), 600);
-        return;
-      }
+    refreshCreatorAccessories();
+    refreshPreview();
 
-      const name = nameInput.value.trim() || 'Amigo do Luigi';
+    saveBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim() || 'Skatista Radical';
       const original = saveBtn.textContent;
       saveBtn.textContent = 'Processando…';
       saveBtn.disabled = true;
 
       try {
         stopCamera();
-        await window.characterManager.createCustomCharacterFromImage(loadedRawImg, name, getOptions());
+        const opts = getOptions();
+        await window.characterManager.createCustomCharacterFromImage(loadedRawImg, name, opts);
+        if (window.progressionManager && opts.accessory && window.progressionManager.isOwned('accessories', opts.accessory)) {
+          window.progressionManager.equipItem('accessories', opts.accessory);
+        }
         loadedRawImg = null;
         preview.hidden = true;
         if (dragHint) dragHint.hidden = true;
@@ -965,11 +1678,11 @@ class Game {
         if (flipInput) flipInput.checked = false;
         if (helmetInput) helmetInput.checked = true;
         if (fullPhotoInput) fullPhotoInput.checked = false;
-        syncSliderState();
+        refreshPreview();
         this.showCharacterSelect();
       } catch (err) {
         console.error(err);
-        alert('Não foi possível processar a imagem. Tente outro arquivo JPG ou PNG.');
+        showCameraError('Não foi possível salvar o personagem. Tente outra imagem ou estilo.');
       } finally {
         saveBtn.textContent = original;
         saveBtn.disabled = false;
@@ -981,34 +1694,125 @@ class Game {
   // Fluxo de partida
   // ==========================================================
 
+  blurActiveElement() {
+    const active = document.activeElement;
+    if (active && active !== document.body && typeof active.blur === 'function') {
+      active.blur();
+    }
+  }
+
+  clearSwipeTimers() {
+    if (!this._swipeTimers) return;
+    this._swipeTimers.forEach(id => clearTimeout(id));
+    this._swipeTimers.clear();
+  }
+
+  clearGameplayTimersAndOverlays({ clearToasts = false } = {}) {
+    this.input.clear();
+    this.clearSwipeTimers();
+
+    if (this._hintTimer) { clearTimeout(this._hintTimer); this._hintTimer = null; }
+    if (this._bannerTimer) { clearTimeout(this._bannerTimer); this._bannerTimer = null; }
+    for (const key in this._popTimers) {
+      clearTimeout(this._popTimers[key]);
+      delete this._popTimers[key];
+    }
+
+    if (this.el.runHint) this.el.runHint.classList.remove('visible');
+    if (this.el.stageBanner) this.el.stageBanner.classList.remove('active');
+    if (this.el.combo) {
+      this.el.combo.classList.remove('active', 'is-grinding', 'is-banked');
+    }
+    document.querySelectorAll('.touch-btn.is-pressed, .desk-trick-btn.is-pressed').forEach(btn => {
+      btn.classList.remove('is-pressed');
+    });
+
+    if (clearToasts) {
+      this._toastQueue = [];
+      this._toastBusy = false;
+      if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; }
+      if (this.el.toastStack) this.el.toastStack.innerHTML = '';
+    }
+  }
+
+  /** Deposita moedas coletadas na carteira (1 única vez por corrida), inclusive ao sair do Treino Livre. */
+  bankCoinsIfNeeded(notify = false) {
+    const p = this.player;
+    const rawCoins = p ? Math.max(0, Math.floor(p.coins || 0)) : 0;
+    if (this._coinsBankedThisRun || !window.progressionManager) {
+      return { raw: rawCoins, bonus: 0, total: rawCoins };
+    }
+    this._coinsBankedThisRun = true;
+    const info = window.progressionManager.bankRunCoins(rawCoins);
+    if (notify && info.total > 0) {
+      this.showToast({
+        icon: '🪙',
+        title: 'Moedas guardadas na carteira',
+        reward: info.total
+      });
+    }
+    return info;
+  }
+
   startPlay() {
-    this.world.reset();
+    this._runId++;
+    this.blurActiveElement();
+    this.clearGameplayTimersAndOverlays({ clearToasts: true });
+
+    const localBestDist = this.leaderboard.getAll().reduce((acc, it) => Math.max(acc, it.distance || 0), 0);
+    const progBestDist = (window.progressionManager && window.progressionManager.data?.stats?.bestDistance) || 0;
+    const recordDistance = Math.max(localBestDist, progBestDist);
+
+    this.world.reset({ recordDistance });
     if (this.player.setSport) this.player.setSport(this.selectedSport);
-    this.player.reset(this.world);
+    this.player.reset(this.world, {
+      gameMode: this.selectedMode,
+      difficulty: this.selectedDifficulty,
+      startStageIndex: this.selectedStage,
+      sportId: this.selectedSport
+    });
     this.camera.reset();
     window.particleSystem.clear();
 
-    this.input.clear();
     this.accumulator = 0;
     this.lastTime = performance.now();
     this.hudCache = {};
+    this._prevLivesCount = this.player.lives;
     this.comboBankTimer = 0;
     this.comboBankMult = 1;
     this.comboBankPoints = 0;
     this._scoreSavedThisRun = false;
     this._lastSavedEntryId = null;
     this._onlineSavedThisRun = false;
+    this._coinsBankedThisRun = false;
+
+    if (this.el.avatar && window.characterManager) {
+      const ch = window.characterManager.getSelected();
+      this.el.avatar.src = (ch && ch.portrait) || 'assets/portraits/portrait_luigi_3d.png';
+    }
 
     this.setState('PLAYING');
+    this.updateHUD();
+    if (window.soundSystem.setMusicContext) {
+      window.soundSystem.setMusicContext(this.player.currentStageIndex, false);
+    }
     window.soundSystem.startMusic();
 
-    this.el.runHint.classList.add('visible');
-    clearTimeout(this._hintTimer);
-    this._hintTimer = setTimeout(() => this.el.runHint.classList.remove('visible'), 3400);
+    if (this.el.runHint) this.el.runHint.classList.add('visible');
+    this._hintTimer = setTimeout(() => {
+      if (this.el.runHint) this.el.runHint.classList.remove('visible');
+      this._hintTimer = null;
+    }, 3400);
   }
 
   pauseGame() {
     if (this.state !== 'PLAYING') return;
+    this.input.clear();
+    this.clearSwipeTimers();
+    document.querySelectorAll('.touch-btn.is-pressed, .desk-trick-btn.is-pressed').forEach(btn => {
+      btn.classList.remove('is-pressed');
+    });
+    this.blurActiveElement();
     this.setState('PAUSED');
     window.soundSystem.stopMusic();
     if (window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
@@ -1016,6 +1820,7 @@ class Game {
 
   resumeGame() {
     if (this.state !== 'PAUSED') return;
+    this.blurActiveElement();
     this.setState('PLAYING');
     this.lastTime = performance.now();
     this.accumulator = 0;
@@ -1023,19 +1828,49 @@ class Game {
   }
 
   gameOver() {
+    this.clearGameplayTimersAndOverlays({ clearToasts: false });
     this.setState('GAME_OVER');
     window.soundSystem.stopMusic();
     if (window.soundSystem.silenceLoops) window.soundSystem.silenceLoops();
     delete this.wrapper.dataset.speedFx;
+    delete this.wrapper.dataset.fever;
 
     const p = this.player;
     const prevTopScore = this.leaderboard.getTopScore();
 
+    // Deposita moedas coletadas na Carteira Permanente (1 única vez por corrida)
+    let bankInfo = { raw: p.coins, bonus: 0, total: p.coins };
+    if (!this._coinsBankedThisRun && window.progressionManager) {
+      bankInfo = this.bankCoinsIfNeeded(false);
+      const endNotes = window.progressionManager.recordRunEvent('run_end', 1, {
+        distance: p.distance,
+        bestCombo: p.bestCombo,
+        stageIndex: p.currentStageIndex
+      });
+      if (endNotes && endNotes.length) this.onProgressionNotifications(endNotes);
+    }
+
+    const bankSummaryEl = document.getElementById('gameover-bank-summary');
+    if (bankSummaryEl) {
+      const totalBank = window.progressionManager ? window.progressionManager.getCoins() : bankInfo.total;
+      const bonusStr = bankInfo.bonus > 0 ? ` (+${bankInfo.bonus} bônus!)` : '';
+      bankSummaryEl.textContent = `🪙 +${bankInfo.total} moedas guardadas na carteira${bonusStr} · Saldo: ${formatNumber(totalBank)} 🪙`;
+    }
+    const shopCoinsEl = document.getElementById('gameover-shop-coins');
+    if (shopCoinsEl && window.progressionManager) {
+      shopCoinsEl.textContent = formatNumber(window.progressionManager.getCoins());
+    }
+
     document.getElementById('final-score').textContent = formatNumber(p.score);
     document.getElementById('final-distance').textContent = Math.floor(p.distance) + 'm';
-    document.getElementById('final-coins').textContent = p.coins;
+    document.getElementById('final-coins').textContent = formatNumber(p.coins);
     document.getElementById('final-combo').textContent = 'x' + p.bestCombo;
-    document.getElementById('gameover-reason').textContent = p.deathReason || 'Boa sessão de skate!';
+    document.getElementById('gameover-reason').textContent = p.deathReason || 'Boa sessão radical!';
+
+    // Oculta o formulário de registro se a corrida terminou com 0 pontos
+    if (this.el.registerBox) {
+      this.el.registerBox.hidden = p.score <= 0;
+    }
 
     // Prepara o formulário de nome do jogador
     if (this.el.playerNameInput) {
@@ -1166,12 +2001,15 @@ class Game {
     }
 
     // Envio explícito para o Placar Global Online (1 única vez por partida)
+    const runId = this._runId;
     if (this.el.btnSaveScore) {
       this.el.btnSaveScore.disabled = true;
       this.el.btnSaveScore.innerHTML = '<span>⏳</span> Enviando…';
     }
 
     const res = await this.submitOnlineScoreOnce({ silent: false });
+    if (runId !== this._runId || this.state !== 'GAME_OVER') return;
+
     if (res && res.ok) {
       if (this.el.registerFeedback && entry) {
         this.el.registerFeedback.hidden = false;
@@ -1225,10 +2063,15 @@ class Game {
   async loadLeaderboardView(containerId, statusId, mode = 'global') {
     const statusEl = statusId ? document.getElementById(statusId) : null;
     const isBadge = statusId === 'gameover-leaderboard-status';
+    const isMain = containerId === 'main-leaderboard-list';
+    if (isMain) this._cachedLbContainer = containerId;
+    const reqSeq = (this._lbReqSeq[containerId] = (this._lbReqSeq[containerId] || 0) + 1);
 
     if (mode === 'local') {
       if (statusEl) statusEl.textContent = isBadge ? '📱 Local' : '📱 Pontuações salvas neste aparelho';
-      this.renderLeaderboard(containerId, this.leaderboard.getAll());
+      const localList = this.leaderboard.getAll();
+      if (isMain) this._cachedLeaderboardList = localList;
+      this.renderLeaderboard(containerId, localList);
       return;
     }
 
@@ -1237,15 +2080,21 @@ class Game {
     if (window.onlineLeaderboard && window.onlineLeaderboard.isAvailable()) {
       try {
         const scores = await window.onlineLeaderboard.fetchTopScores(40);
+        if (this._lbReqSeq[containerId] !== reqSeq) return;
         if (statusEl) statusEl.textContent = isBadge ? '🌎 Global' : '🌎 Placar universal — todos os jogadores';
+        if (isMain) this._cachedLeaderboardList = scores;
         this.renderLeaderboard(containerId, scores);
         return;
       } catch (_) {}
     }
 
+    if (this._lbReqSeq[containerId] !== reqSeq) return;
+
     // Fallback automático offline para o placar local
     if (statusEl) statusEl.textContent = isBadge ? '📱 Local (offline)' : '📡 Sem internet — mostrando placar local';
-    this.renderLeaderboard(containerId, this.leaderboard.getAll());
+    const fallback = this.leaderboard.getAll();
+    if (isMain) this._cachedLeaderboardList = fallback;
+    this.renderLeaderboard(containerId, fallback);
   }
 
   clearLeaderboard() {
@@ -1255,6 +2104,7 @@ class Game {
       if (this.el.highscore) this.el.highscore.textContent = '0';
       const hs = document.getElementById('menu-highscore');
       if (hs) hs.textContent = '0';
+      this._cachedLeaderboardList = [];
       this.renderLeaderboard('main-leaderboard-list', []);
       this.renderLeaderboard('gameover-leaderboard-list', []);
     }
@@ -1264,11 +2114,15 @@ class Game {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    const list = Array.isArray(customList) ? customList : this.leaderboard.getAll();
+    let list = Array.isArray(customList) ? customList : this.leaderboard.getAll();
+    if (containerId === 'main-leaderboard-list' && this.leaderboardSportFilter && this.leaderboardSportFilter !== 'all') {
+      list = list.filter(it => (it.sportId || 'skate') === this.leaderboardSportFilter);
+    }
     if (list.length === 0) {
+      const isFiltered = containerId === 'main-leaderboard-list' && this.leaderboardSportFilter && this.leaderboardSportFilter !== 'all';
       container.innerHTML = `
         <div class="leaderboard-empty">
-          <p>🛹 <b>Nenhuma pontuação registrada ainda!</b></p>
+          <p>🛹 <b>${isFiltered ? 'Nenhuma pontuação registrada neste esporte ainda!' : 'Nenhuma pontuação registrada ainda!'}</b></p>
           <span>Jogue uma partida, digite seu nome e seja o 1º Campeão Radical!</span>
         </div>
       `;
@@ -1303,7 +2157,7 @@ class Game {
         <div class="leader-item ${rankClass}">
           <div class="leader-col-left">
             <span class="leader-rank">${rankBadge}</span>
-            <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.src='assets/sprites/luigi_3d_skate.png'">
+            <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
             <div class="leader-info">
               <span class="leader-name">${escapeHtml(item.name)} ${index === 0 ? '<span title="Campeão">👑</span>' : ''}</span>
               <div class="leader-meta">
@@ -1375,18 +2229,30 @@ class Game {
       else this.wrapper.dataset.speedFx = speedFx;
     }
 
-    // Vidas (suporte a até 5 vidas com ícone do esporte ativo)
+    // Vidas (3 iniciais, até 5 com bônus de fase — exibe 3 acesos + 2 espaços extras; ∞ em Treino Livre/60s)
     const lives = Math.max(0, p.lives);
     const maxLives = p.maxLives || 5;
-    const lifeIcon = this.getSportInfo(this.selectedSport).icon || '🛹';
-    const livesKey = `${lives}:${lifeIcon}`;
+    const sportInfo = this.getSportInfo(this.selectedSport);
+    const lifeIcon = sportInfo.icon || '🛹';
+    const isNoLifeLoss = p.gameMode === 'free' || p.gameMode === 'time60';
+    const livesKey = `${isNoLifeLoss ? 'inf' : lives}:${maxLives}:${lifeIcon}`;
     if (this.hudCache.lives !== livesKey) {
+      const gained = !isNoLifeLoss && this._prevLivesCount !== null && lives > this._prevLivesCount;
+      this._prevLivesCount = lives;
       this.hudCache.lives = livesKey;
-      let html = '';
-      for (let i = 0; i < maxLives; i++) {
-        html += `<span class="${i < lives ? '' : 'life-lost'}">${lifeIcon}</span>`;
+      if (isNoLifeLoss) {
+        this.el.lives.innerHTML = `<span class="life-infinite">${lifeIcon} ∞</span>`;
+        this.el.lives.setAttribute('aria-label', 'Vidas infinitas neste modo');
+      } else {
+        let html = '';
+        for (let i = 0; i < maxLives; i++) {
+          const isLit = i < lives;
+          const cls = isLit ? (gained && i === lives - 1 ? 'life-gained' : '') : 'life-lost';
+          html += `<span class="${cls}">${lifeIcon}</span>`;
+        }
+        this.el.lives.innerHTML = html;
+        this.el.lives.setAttribute('aria-label', `${lives} de ${maxLives} vidas restantes`);
       }
-      this.el.lives.innerHTML = html;
     }
 
     // Progresso da Fase atual e sincronização de bioma no HUD
@@ -1423,8 +2289,9 @@ class Game {
 
     const displayMult = showBanked ? this.comboBankMult : Math.max(1, p.comboMultiplier || 1);
     const displayPoints = showBanked ? this.comboBankPoints : (p.comboPoints || 0);
+    const grindLabel = (p.sport && p.sport.grindLabel) || sportInfo.grindLabel || 'GRIND!';
     const displayAction = isGrinding
-      ? 'GRIND!'
+      ? grindLabel
       : (showBanked ? 'COMBO FECHADO!' : (p.lastTrickName || 'COMBO'));
     const comboKey = `${showCombo}:${isGrinding}:${showBanked}:${displayMult}:${displayAction}:${Math.floor(displayPoints)}`;
 
@@ -1447,9 +2314,115 @@ class Game {
       }
     }
 
-    // Medidores
+    // Medidores e efeitos do HUD
+    if (this.el.timerChip && this.el.timer) {
+      const is60 = p.gameMode === 'time60';
+      this.el.timerChip.hidden = !is60;
+      if (is60) {
+        const secs = Math.max(0, Math.ceil((p.timeLeftSteps || 0) / 60));
+        this.setText('timer', this.el.timer, secs + 's');
+      }
+    }
+
+    if (this.el.word && Array.isArray(p.lettersCollected)) {
+      const wKey = p.lettersCollected.map(v => (v ? '1' : '0')).join('');
+      if (this.hudCache.word !== wKey) {
+        this.hudCache.word = wKey;
+        const spans = this.el.word.querySelectorAll('span');
+        spans.forEach((sp, idx) => sp.classList.toggle('collected', !!p.lettersCollected[idx]));
+      }
+    }
+
+    const isFever = (p.feverTimer || 0) > 0;
+    const feverVal = isFever ? (p.feverTimer / (p.feverDuration || 360)) : ((p.feverGauge || 0) / 100);
+    if (this.el.fever) {
+      this.setMeter(this.el.fever, true, feverVal);
+      this.el.fever.classList.toggle('is-fever', isFever);
+      if (this.el.feverLabel) {
+        const txt = isFever ? 'MODO RADICAL x2!' : `RADICAL ${Math.floor(p.feverGauge || 0)}%`;
+        this.setText('feverLabel', this.el.feverLabel, txt);
+      }
+    }
+    const feverAttr = isFever ? 'on' : '';
+    if (this.hudCache.feverAttr !== feverAttr) {
+      this.hudCache.feverAttr = feverAttr;
+      if (feverAttr) this.wrapper.dataset.fever = feverAttr;
+      else delete this.wrapper.dataset.fever;
+    }
+
     this.setMeter(this.el.turbo, p.turboTimer > 0, p.turboTimer / (p.turboDuration || 1));
     this.setMeter(this.el.shield, p.hasShield, 1);
+    if (this.el.magnet) this.setMeter(this.el.magnet, (p.magnetTimer || 0) > 0, (p.magnetTimer || 0) / (p.magnetDuration || 1));
+    if (this.el.double) this.setMeter(this.el.double, (p.doubleTimer || 0) > 0, (p.doubleTimer || 0) / (p.doubleDuration || 1));
+
+    if (this.el.desktopTrickBar) {
+      const inAir = !p.onGround && !p.isGrinding;
+      if (this.hudCache.deskInAir !== inAir) {
+        this.hudCache.deskInAir = inAir;
+        this.el.desktopTrickBar.classList.toggle('in-air', inAir);
+      }
+    }
+  }
+
+  showToast({ icon = '✨', title = '', reward = 0, subtitle = '', info = false } = {}) {
+    if (!title && !subtitle) return;
+    if (this._toastQueue.length >= 2) this._toastQueue.shift();
+    this._toastQueue.push({ icon, title, reward, subtitle, info });
+    this._pumpToastQueue();
+  }
+
+  onProgressionNotifications(notes) {
+    if (!Array.isArray(notes) || notes.length === 0) return;
+    let playedChest = false;
+    let playedMission = false;
+    for (const n of notes) {
+      if (n.kind === 'levelup' && !playedChest) {
+        playedChest = true;
+        window.soundSystem?.playChestOpen?.();
+      } else if (!playedMission) {
+        playedMission = true;
+        window.soundSystem?.playMissionComplete?.();
+      }
+      if (this._toastQueue.length < 2) {
+        this._toastQueue.push(n);
+      } else if (n.kind === 'levelup') {
+        const idx = this._toastQueue.findIndex(item => item.kind !== 'levelup');
+        if (idx >= 0) this._toastQueue[idx] = n;
+      }
+    }
+    this._pumpToastQueue();
+  }
+
+  _pumpToastQueue() {
+    if (this._toastBusy || !this.el.toastStack || this._toastQueue.length === 0) return;
+    const n = this._toastQueue.shift();
+    if (!n) return;
+
+    this._toastBusy = true;
+    this.el.toastStack.innerHTML = '';
+
+    const detailHtml = n.subtitle
+      ? `<span>${escapeHtml(n.subtitle)}</span>`
+      : (n.reward ? `<span>+${formatNumber(n.reward)} 🪙</span>` : '');
+
+    const el = document.createElement('div');
+    el.className = 'toast-item' + (n.info ? ' toast-item--info' : '');
+    el.innerHTML = `
+      <span class="toast-icon">${escapeHtml(n.icon || '🎯')}</span>
+      <div class="toast-body">
+        <strong>${escapeHtml(n.title || '')}</strong>
+        ${detailHtml}
+      </div>
+    `;
+    this.el.toastStack.appendChild(el);
+
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      el.remove();
+      this._toastBusy = false;
+      this._toastTimer = null;
+      this._pumpToastQueue();
+    }, 2200);
   }
 
   onStageUnlocked(stage) {
@@ -1458,15 +2431,23 @@ class Game {
 
     // As duas ocupam o mesmo canto do rodapé; a dica sai de cena para o aviso
     if (this.el.runHint) this.el.runHint.classList.remove('visible');
-    clearTimeout(this._hintTimer);
+    if (this._hintTimer) { clearTimeout(this._hintTimer); this._hintTimer = null; }
     this.el.stageBannerIcon.textContent = stage.icon || '🎉';
     this.el.stageBannerTitle.textContent = `FASE ${this.player.currentStageIndex + 1} DESBLOQUEADA!`;
     this.el.stageBannerName.textContent = stage.name;
+    if (this.el.stageBannerReward) {
+      const sportIcon = this.getSportInfo(this.selectedSport).icon || '🛹';
+      const isNoLifeLoss = this.player.gameMode === 'free' || this.player.gameMode === 'time60';
+      this.el.stageBannerReward.textContent = isNoLifeLoss
+        ? '+1.000 pts'
+        : `${sportIcon} +1 vida · +1.000 pts`;
+    }
     banner.classList.add('active');
 
     if (this._bannerTimer) clearTimeout(this._bannerTimer);
     this._bannerTimer = setTimeout(() => {
       banner.classList.remove('active');
+      this._bannerTimer = null;
     }, 3000);
   }
 
@@ -1564,11 +2545,14 @@ class Game {
       }
     }
 
-    // Atualiza som ambiente de vento proporcional à velocidade e altura
+    // Atualiza som ambiente de vento e contexto musical dinâmico por bioma
     const speedNorm = p.speedNormalized !== undefined ? p.speedNormalized : (p.speed / (p.maxSpeed || 12.5));
     const altitude = p.airHeight !== undefined ? p.airHeight : Math.max(0, this.world.groundY - p.bottom);
-    if (window.soundSystem && window.soundSystem.updateWind) {
-      window.soundSystem.updateWind(speedNorm, altitude);
+    if (window.soundSystem) {
+      if (window.soundSystem.updateWind) window.soundSystem.updateWind(speedNorm, altitude);
+      if (window.soundSystem.setMusicContext) {
+        window.soundSystem.setMusicContext(p.currentStageIndex, p.turboTimer > 0 || p.feverTimer > 0);
+      }
     }
 
     if (p.isGameOver) this.gameOver();

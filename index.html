@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Luigi Skate">
   <link rel="apple-touch-icon" href="assets/portraits/portrait_luigi_3d.png">
-  <meta name="description" content="Jogo de skate 2D estrelando o Luigi em versão realista e versão 3D, com manobras aéreas, pistas que desabam e mega rampas.">
+  <meta name="description" content="Jogo de skate 2D estrelando o Luigi e personagens customizados, com manobras aéreas, oficina, missões, pistas que desabam e mega rampas.">
 
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070812'/%3E%3Crect x='4' y='13' width='24' height='4' rx='2' fill='%2322d3ee'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23f43f7e'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23f43f7e'/%3E%3C/svg%3E">
 
@@ -36,8 +36,8 @@
     <!-- ================= HUD DE JOGO ================= -->
     <header id="hud">
       <div class="hud-side">
-        <div class="hud-chip hud-lives-chip">
-          <span class="hud-chip-label">Vidas</span>
+        <div class="hud-chip hud-lives-chip" title="Vidas na corrida (começa com 3, até 5 com bônus de fase)">
+          <img id="hud-avatar" class="hud-avatar" src="assets/portraits/portrait_luigi_3d.png" alt="Avatar" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
           <span id="hud-lives" class="hud-lives" aria-label="Vidas restantes"></span>
         </div>
         <div class="hud-chip hud-stage-chip">
@@ -62,9 +62,16 @@
             </div>
           </div>
         </div>
+        <div id="hud-timer-chip" class="hud-chip hud-timer-chip" hidden>
+          <span class="hud-chip-icon">⏱️</span>
+          <span id="hud-timer" class="hud-num">60s</span>
+        </div>
       </div>
 
       <div class="hud-side hud-side-right">
+        <div id="hud-word" class="hud-chip hud-word-chip" title="Colete as letras L-U-I-G-I">
+          <span>L</span><span>U</span><span>I</span><span>G</span><span>I</span>
+        </div>
         <div class="hud-chip hud-chip--gold">
           <span class="hud-chip-icon">🪙</span>
           <span id="hud-coins" class="hud-num">0</span>
@@ -78,11 +85,14 @@
           <span id="hud-highscore" class="hud-num">0</span>
         </div>
         <div class="hud-actions">
-          <button id="btn-mute-hud" class="icon-btn" title="Ligar / desligar som" aria-label="Ligar ou desligar som">🔊</button>
-          <button id="btn-pause-hud" class="icon-btn" title="Pausar (P)" aria-label="Pausar jogo">❚❚</button>
+          <button type="button" id="btn-mute-hud" class="icon-btn" title="Ligar / desligar som (M)" aria-label="Ligar ou desligar som">🔊</button>
+          <button type="button" id="btn-pause-hud" class="icon-btn" title="Pausar (P)" aria-label="Pausar jogo">❚❚</button>
         </div>
       </div>
     </header>
+
+    <!-- Notificações de missões e troféus durante a partida -->
+    <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
     <!-- Banner triunfal de passagem de fase -->
     <div id="stage-banner" class="stage-banner" aria-hidden="true">
@@ -92,14 +102,17 @@
           <span id="stage-banner-title" class="stage-banner-title">NOVA FASE DESBLOQUEADA!</span>
           <span id="stage-banner-name" class="stage-banner-name">Metrópole Cyberpunk Neon</span>
         </span>
-        <span class="stage-banner-reward">🛹 +1 &nbsp;·&nbsp; +1.000 pts</span>
+        <span id="stage-banner-reward" class="stage-banner-reward">🛹 +1 &nbsp;·&nbsp; +1.000 pts</span>
       </div>
     </div>
 
-    <!-- Medidores de turbo e escudo -->
+    <!-- Medidores de Modo Radical, Turbo, Escudo, Ímã e 2X -->
     <div id="status-bar" class="status-bar" aria-hidden="true">
+      <div id="fever-meter" class="meter meter--fever active"><i></i><span id="fever-meter-label">RADICAL 0%</span></div>
       <div id="turbo-meter" class="meter meter--turbo"><i></i><span>TURBO</span></div>
       <div id="shield-meter" class="meter meter--shield"><i></i><span>ESCUDO</span></div>
+      <div id="magnet-meter" class="meter meter--magnet"><i></i><span>ÍMÃ 🧲</span></div>
+      <div id="double-meter" class="meter meter--double"><i></i><span>PONTOS 2X ⭐</span></div>
     </div>
 
     <!-- Contador de combo e grind -->
@@ -111,26 +124,33 @@
 
     <!-- Dica rápida no início da partida -->
     <div id="run-hint" class="run-hint" aria-hidden="true">
-      <kbd>&rarr;</kbd> remar <em>/</em> <kbd>&larr;</kbd> frear <em>/</em> <kbd>Espaço</kbd> pular <em>/</em> <kbd>S</kbd> abaixar ou descer rápido <em>/</em> <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> manobras
+      <kbd>&rarr;</kbd> remar <em>/</em> <kbd>&uarr;</kbd><kbd>Espaço</kbd> pular <em>/</em> <kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd> ou <kbd>Shift</kbd> no ar: manobras
+    </div>
+
+    <!-- Atalho discreto de manobras para desktop (no rodapé, fora da pista) -->
+    <div id="desktop-trick-bar" class="desktop-trick-bar" aria-label="Atalhos de manobras">
+      <button type="button" id="desk-trick-1" class="desk-trick-btn" title="Manobra 1 (Tecla Z)"><kbd>Z</kbd><span id="desk-trick-1-label">FLIP</span></button>
+      <button type="button" id="desk-trick-2" class="desk-trick-btn" title="Manobra 2 (Tecla X)"><kbd>X</kbd><span id="desk-trick-2-label">360°</span></button>
+      <button type="button" id="desk-trick-3" class="desk-trick-btn" title="Manobra 3 (Tecla C)"><kbd>C</kbd><span id="desk-trick-3-label">GRAB</span></button>
     </div>
 
     <!-- ================= CONTROLES DE TOQUE ================= -->
     <div id="touch-controls">
       <div class="touch-cluster">
-        <button id="touch-accelerate" class="touch-btn touch-btn--speed" aria-label="Acelerar e remar">
+        <button type="button" id="touch-accelerate" class="touch-btn touch-btn--speed" aria-label="Acelerar e remar">
           <span class="touch-glyph">▶▶</span><span class="touch-label">REMAR</span>
         </button>
-        <button id="touch-duck" class="touch-btn" aria-label="Abaixar ou queda rápida">
+        <button type="button" id="touch-duck" class="touch-btn" aria-label="Abaixar ou queda rápida">
           <span class="touch-glyph">▼</span><span class="touch-label">ABAIXAR</span>
         </button>
-        <button id="touch-jump" class="touch-btn touch-btn--primary" aria-label="Pular">
+        <button type="button" id="touch-jump" class="touch-btn touch-btn--primary" aria-label="Pular">
           <span class="touch-glyph">▲</span><span class="touch-label">PULAR</span>
         </button>
       </div>
       <div class="touch-cluster touch-cluster--tricks">
-        <button id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra 1"><span class="touch-glyph">Z</span><span id="touch-trick-1-label" class="touch-label">FLIP</span></button>
-        <button id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra 2"><span class="touch-glyph">X</span><span id="touch-trick-2-label" class="touch-label">360°</span></button>
-        <button id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra 3"><span class="touch-glyph">C</span><span id="touch-trick-3-label" class="touch-label">GRAB</span></button>
+        <button type="button" id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra 1"><span class="touch-glyph">Z</span><span id="touch-trick-1-label" class="touch-label">FLIP</span></button>
+        <button type="button" id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra 2"><span class="touch-glyph">X</span><span id="touch-trick-2-label" class="touch-label">360°</span></button>
+        <button type="button" id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra 3"><span class="touch-glyph">C</span><span id="touch-trick-3-label" class="touch-label">GRAB</span></button>
       </div>
     </div>
 
@@ -148,10 +168,42 @@
 
     <!-- ================= TELA: MENU ================= -->
     <section id="screen-menu" class="screen hidden">
+      <div class="menu-topbar">
+        <div class="wallet-pill">
+          <span>🪙</span>
+          <b id="menu-coins">0</b>
+          <small>moedas</small>
+        </div>
+        <div class="rank-pill">
+          <span>⭐</span>
+          <b>Nv. <span id="menu-rank">1</span></b>
+          <span id="menu-rank-title">Novato</span>
+          <em id="menu-mult">x1.0 pts</em>
+        </div>
+      </div>
+
       <div class="brandmark">
         <span class="brandmark-kicker">Arcade Radical</span>
         <h1 class="brandmark-title"><span>LUIGI</span><b>RADICAL</b></h1>
-        <p class="brandmark-sub">Skate &middot; Bicicleta &middot; Patinete &middot; Patins</p>
+      </div>
+
+      <!-- Seletor de Modo + Dificuldade + Fase Inicial -->
+      <div class="menu-options-strip">
+        <div class="pill-group" id="mode-selector" role="radiogroup" aria-label="Modo de jogo">
+          <button type="button" class="pill-opt active" data-mode="classic" aria-pressed="true" title="3 vidas iniciais (até 5 passando de fase)">🛹 Clássico</button>
+          <button type="button" class="pill-opt" data-mode="time60" aria-pressed="false" title="Faça o máximo de pontos em 60 segundos sem perder vidas">⏱️ 60s</button>
+          <button type="button" class="pill-opt" data-mode="free" aria-pressed="false" title="Treine manobras e colete moedas sem perder vidas">🌟 Treino</button>
+        </div>
+        <div class="pill-group" id="difficulty-selector" role="radiogroup" aria-label="Dificuldade">
+          <button type="button" class="pill-opt active" data-difficulty="easy" aria-pressed="true" title="Fácil: cair no buraco perde 1 vida e volta para a pista">😊 Fácil</button>
+          <button type="button" class="pill-opt" data-difficulty="hard" aria-pressed="false" title="Difícil: objetos tiram 1 vida, mas cair no buraco encerra a partida!">🔥 Difícil</button>
+        </div>
+        <div class="pill-group" id="stage-selector" role="radiogroup" aria-label="Fase inicial">
+          <button type="button" class="pill-opt active" data-stage="0" aria-pressed="true" title="Fase 1: Skatepark ao Pôr do Sol">🌇 F1</button>
+          <button type="button" class="pill-opt" data-stage="1" aria-pressed="false" title="Fase 2: Metrópole Cyberpunk Neon (600m)">🏙️ F2</button>
+          <button type="button" class="pill-opt" data-stage="2" aria-pressed="false" title="Fase 3: Praia &amp; Píer Tropical (1.400m)">🌴 F3</button>
+          <button type="button" class="pill-opt" data-stage="3" aria-pressed="false" title="Fase 4: Pista Cósmica das Estrelas (2.400m)">🚀 F4</button>
+        </div>
       </div>
 
       <!-- Seletor de esporte (4 modos de locomoção) -->
@@ -178,24 +230,95 @@
       </div>
 
       <nav class="menu-buttons">
-        <button id="btn-play" class="btn btn-primary btn-lg">
+        <button type="button" id="btn-play" class="btn btn-primary btn-lg">
           <span id="btn-play-icon" class="btn-icon">🛹</span> Jogar agora
           <span class="btn-hint">Enter</span>
         </button>
         <div class="menu-row">
-          <button id="btn-select-char" class="btn btn-ghost"><span class="btn-icon">👤</span> Personagem</button>
-          <button id="btn-character-creator" class="btn btn-ghost"><span class="btn-icon">✨</span> Criar novo</button>
+          <button type="button" id="btn-select-char" class="btn btn-ghost btn-compact"><span class="btn-icon">👤</span> Personagem</button>
+          <button type="button" id="btn-character-creator" class="btn btn-ghost btn-compact"><span class="btn-icon">✨</span> Criar avatar</button>
         </div>
         <div class="menu-row">
-          <button id="btn-leaderboard" class="btn btn-ghost"><span class="btn-icon">🏆</span> Placar de Líderes</button>
-          <button id="btn-how-to-play" class="btn btn-quiet">Como jogar</button>
+          <button type="button" id="btn-shop" class="btn btn-ghost btn-compact">
+            <span class="btn-icon">🛠️</span> Oficina &amp; Loja
+            <span id="shop-notif-dot" class="notif-dot" hidden></span>
+          </button>
+          <button type="button" id="btn-missions" class="btn btn-ghost btn-compact"><span class="btn-icon">🎯</span> Missões &amp; Troféus</button>
+        </div>
+        <div class="menu-row">
+          <button type="button" id="btn-leaderboard" class="btn btn-ghost btn-compact"><span class="btn-icon">🏆</span> Placar</button>
+          <button type="button" id="btn-how-to-play" class="btn btn-quiet btn-compact">Como jogar</button>
         </div>
       </nav>
 
       <footer class="menu-footer">
         <div class="stat-pill"><span>Recorde</span><b id="menu-highscore">0</b></div>
         <div class="stat-pill"><span>Jogando com</span><b id="menu-current-char">Luigi 3D</b></div>
+        <button type="button" id="btn-footer-missions" class="stat-pill stat-pill--btn"><span>🎯 Missões</span><b id="menu-missions-summary">0/3</b></button>
       </footer>
+    </section>
+
+    <!-- ================= TELA: OFICINA & LOJA ================= -->
+    <section id="screen-shop" class="screen hidden">
+      <div class="screen-head screen-head--row">
+        <div>
+          <h2 class="screen-title"><em class="title-ico">🛠️</em> Oficina Radical</h2>
+          <p class="screen-sub">Use suas moedas para destravar visuais, rastros, acessórios e poderes!</p>
+        </div>
+        <div class="wallet-pill wallet-pill--lg">
+          <span>🪙</span>
+          <b id="shop-coins">0</b>
+          <small>moedas</small>
+        </div>
+      </div>
+
+      <div class="leaderboard-tabs shop-tabs" role="tablist" aria-label="Categorias da oficina">
+        <button type="button" class="lb-tab active" role="tab" aria-selected="true" data-shop-tab="gear">🛹 Equipamentos</button>
+        <button type="button" class="lb-tab" role="tab" aria-selected="false" data-shop-tab="trails">🌈 Rastros</button>
+        <button type="button" class="lb-tab" role="tab" aria-selected="false" data-shop-tab="accessories">👑 Acessórios</button>
+        <button type="button" class="lb-tab" role="tab" aria-selected="false" data-shop-tab="upgrades">⚡ Poderes</button>
+        <button type="button" class="lb-tab" role="tab" aria-selected="false" data-shop-tab="characters">👥 Personagens</button>
+      </div>
+
+      <div id="shop-grid" class="shop-grid"><!-- preenchido via JS --></div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar ao Menu</button>
+      </div>
+    </section>
+
+    <!-- ================= TELA: MISSÕES & TROFÉUS ================= -->
+    <section id="screen-missions" class="screen hidden">
+      <div class="screen-head">
+        <h2 class="screen-title"><em class="title-ico">🎯</em> Missões &amp; Troféus</h2>
+        <p class="screen-sub">Complete as 3 missões para abrir o Baú de Nível (+100 moedas) e subir seu multiplicador!</p>
+      </div>
+
+      <div class="missions-layout">
+        <div class="rank-banner-card">
+          <div class="rank-banner-left">
+            <span class="rank-badge-star">⭐</span>
+            <div>
+              <strong id="missions-rank-label">Nível 1 · Novato na Pista</strong>
+              <span id="missions-mult-label">Multiplicador permanente: x1.0 pontos</span>
+            </div>
+          </div>
+          <div class="rank-chest-box">
+            <span>🎁 Próximo Baú: <b>+100 🪙</b></span>
+            <small id="missions-chest-progress">0 de 3 missões concluídas</small>
+          </div>
+        </div>
+
+        <h3 class="section-mini-title">Missões Ativas</h3>
+        <div id="missions-list" class="missions-list"><!-- preenchido via JS --></div>
+
+        <h3 class="section-mini-title">Álbum de Troféus</h3>
+        <div id="achievements-list" class="achievements-grid"><!-- preenchido via JS --></div>
+      </div>
+
+      <div class="action-row">
+        <button class="btn btn-quiet btn-back-menu">Voltar ao Menu</button>
+      </div>
     </section>
 
     <!-- ================= TELA: SELEÇÃO DE PERSONAGEM ================= -->
@@ -217,18 +340,19 @@
     <section id="screen-character-creator" class="screen hidden">
       <div class="screen-head">
         <h2 class="screen-title">Estúdio de personagens</h2>
-        <p class="screen-sub">Tire uma foto na hora ou escolha da galeria e ajuste o rosto no capacete</p>
+        <p class="screen-sub">Crie com sua foto em tamanho grande ou monte um avatar com gênero, pele, roupa e acessórios!</p>
       </div>
 
-      <div class="creator-container">
+      <div class="creator-container creator-container--wide">
         <div class="creator-stage-col">
-          <!-- Ações de origem: galeria ou câmera ao vivo -->
+          <!-- Ações de origem: galeria, câmera ou avatar sem foto -->
           <div class="creator-source-row">
             <button type="button" id="btn-creator-gallery" class="btn btn-ghost btn-sm">📁 Escolher foto</button>
-            <button type="button" id="btn-creator-camera" class="btn btn-ghost btn-sm">📸 Tirar foto (Câmera)</button>
+            <button type="button" id="btn-creator-camera" class="btn btn-ghost btn-sm">📸 Câmera</button>
+            <button type="button" id="btn-creator-nophoto" class="btn btn-quiet btn-sm">🎨 Sem foto</button>
           </div>
 
-          <!-- Área de câmera ao vivo (visível apenas quando ativa) -->
+          <!-- Área de câmera ao vivo -->
           <div id="creator-camera-box" class="creator-camera-box" hidden>
             <div class="camera-viewport">
               <video id="creator-camera-video" autoplay playsinline muted></video>
@@ -236,33 +360,34 @@
             </div>
             <div class="camera-actions">
               <button type="button" id="btn-camera-capture" class="btn btn-primary btn-sm">📸 Capturar foto</button>
-              <button type="button" id="btn-camera-flip" class="btn btn-ghost btn-sm" title="Alternar câmera frontal/traseira">🔄 Trocar câmera</button>
+              <button type="button" id="btn-camera-flip" class="btn btn-ghost btn-sm">🔄 Trocar câmera</button>
               <button type="button" id="btn-camera-cancel" class="btn btn-quiet btn-sm">Cancelar</button>
             </div>
           </div>
 
           <p id="creator-camera-error" class="creator-camera-error" hidden></p>
 
-          <!-- Área de drop e prévia interativa (arrastar com dedo ou mouse) -->
-          <div id="creator-drop-area" class="creator-drop" tabindex="0" role="button" aria-label="Escolher ou arrastar uma imagem">
-            <div id="creator-upload-prompt" class="creator-prompt">
-              <div class="creator-prompt-icon">📸</div>
-              <strong>Clique, arraste uma foto ou use a câmera</strong>
-              <span>JPG, PNG ou WEBP &middot; tudo fica salvo só no seu aparelho</span>
+          <!-- Prévia dupla: ajuste do rosto (esq) + boneco completo na pista (dir) -->
+          <div class="creator-previews-row">
+            <div id="creator-drop-area" class="creator-drop creator-drop--compact" tabindex="0" role="button" aria-label="Escolher ou arrastar uma imagem">
+              <div id="creator-upload-prompt" class="creator-prompt">
+                <div class="creator-prompt-icon">📸</div>
+                <strong>Foto do Rosto</strong>
+                <span>Clique, arraste ou tire na hora</span>
+              </div>
+              <img id="preview-character-img" alt="Prévia do rosto" draggable="false" hidden>
+              <span id="creator-drag-hint" class="creator-drag-hint" hidden>✋ Arraste para ajustar</span>
             </div>
-            <img id="preview-character-img" alt="Pré-visualização do rosto no capacete" draggable="false" hidden>
-            <span id="creator-drag-hint" class="creator-drag-hint" hidden>✋ Arraste a foto para centralizar o rosto</span>
+
+            <div class="creator-fullbody-box">
+              <span class="creator-mini-label">Na Pista (Ao Vivo)</span>
+              <img id="preview-fullbody-img" alt="Prévia do personagem completo">
+            </div>
           </div>
           <input type="file" id="custom-char-file" accept="image/*" hidden>
-        </div>
 
-        <div class="creator-form">
-          <div class="field">
-            <label for="custom-char-name">Nome do personagem</label>
-            <input type="text" id="custom-char-name" placeholder="Ex: Super Amigo, Papai, Luigi Ninja" maxlength="24" autocomplete="off">
-          </div>
-
-          <div class="creator-controls">
+          <!-- Sliders de ajuste fino da foto -->
+          <div id="creator-photo-sliders" class="creator-controls">
             <div class="creator-slider-field">
               <label for="custom-face-x">Esquerda ↔ Direita</label>
               <input type="range" id="custom-face-x" min="-0.45" max="0.45" step="0.01" value="0">
@@ -277,16 +402,60 @@
             </div>
             <label class="creator-toggle">
               <input type="checkbox" id="custom-face-flip">
-              <span>Espelhar foto (inverter lado)</span>
+              <span>Espelhar foto</span>
             </label>
             <label class="creator-toggle">
               <input type="checkbox" id="custom-use-helmet" checked>
-              <span>Usar capacete SK8 oficial</span>
+              <span>Usar capacete SK8 (alto, sem tampar os olhos)</span>
             </label>
             <label class="creator-toggle">
               <input type="checkbox" id="custom-full-photo">
-              <span>Usar a foto inteira <small>(sem boneco articulado)</small></span>
+              <span>Usar foto inteira <small>(sem boneco articulado)</small></span>
             </label>
+          </div>
+        </div>
+
+        <div class="creator-form">
+          <div class="field">
+            <label for="custom-char-name">Nome do personagem</label>
+            <input type="text" id="custom-char-name" placeholder="Ex: Luigi Pro, Super Amigo, Bia" maxlength="24" autocomplete="off">
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Tamanho do Rosto</span>
+            <div class="pill-group pill-group--wrap" id="creator-headsize-row" role="radiogroup" aria-label="Tamanho do rosto">
+              <button type="button" class="pill-opt active" data-headsize="large" aria-pressed="true">😀 Grande (Mais nítido)</button>
+              <button type="button" class="pill-opt" data-headsize="normal" aria-pressed="false">🙂 Normal</button>
+            </div>
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Gênero / Estilo do Corpo</span>
+            <div class="pill-group" id="creator-gender-row" role="radiogroup" aria-label="Gênero e estilo do corpo">
+              <button type="button" class="pill-opt active" data-gender="boy" aria-pressed="true">👦 Menino</button>
+              <button type="button" class="pill-opt" data-gender="girl" aria-pressed="false">👧 Menina</button>
+              <button type="button" class="pill-opt" data-gender="neutral" aria-pressed="false">🌟 Livre</button>
+            </div>
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Cor da Pele</span>
+            <div class="swatch-row" id="creator-skin-row"><!-- preenchido via JS --></div>
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Cor da Roupa</span>
+            <div class="swatch-row" id="creator-outfit-row"><!-- preenchido via JS --></div>
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Cor do Cabelo</span>
+            <div class="swatch-row" id="creator-hair-row"><!-- preenchido via JS --></div>
+          </div>
+
+          <div class="customizer-group">
+            <span class="customizer-label">Acessório Inicial</span>
+            <div class="pill-group pill-group--wrap" id="creator-accessory-row"><!-- preenchido via JS --></div>
           </div>
 
           <button id="btn-save-custom-char" class="btn btn-primary">Salvar e jogar</button>
@@ -302,44 +471,32 @@
     <section id="screen-how-to-play" class="screen hidden">
       <div class="screen-head">
         <h2 class="screen-title">Como jogar</h2>
-        <p class="screen-sub">Comandos e desafios da pista</p>
+        <p class="screen-sub">Comandos, poderes especiais e desafios da pista</p>
       </div>
 
       <div class="instructions-grid">
         <article class="instruction">
-          <div class="instruction-keys"><kbd>&rarr;</kbd><kbd>D</kbd> <kbd>&larr;</kbd><kbd>A</kbd></div>
-          <h3>Remar e Freio leve</h3>
-          <p>Segure para frente para remar com força e embalar o skate; segure para trás para frear de leve e acertar o tempo dos saltos.</p>
+          <div class="instruction-keys"><kbd>&rarr;</kbd><kbd>D</kbd> <kbd>Espaço</kbd> <kbd>S</kbd></div>
+          <h3>Controles e Deslize no Celular</h3>
+          <p>Reme com <b>&rarr;/D</b>, pule com <b>Espaço/W/&uarr;</b> e abaixe ou caia rápido com <b>S/&darr;</b>. No celular, use os botões ou deslize o dedo na tela!</p>
         </article>
 
         <article class="instruction">
-          <div class="instruction-keys"><kbd>Espaço</kbd><kbd>W</kbd><kbd>&uarr;</kbd></div>
-          <h3>Pular (Ollie)</h3>
-          <p>Salte caixas, buracos e trechos quebradiços. Segure a tecla para subir mais alto e alcançar corrimãos elevados.</p>
+          <div class="instruction-keys"><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>Shift</kbd><kbd>&uarr;</kbd></div>
+          <h3>Manobras &amp; Combo Emendado</h3>
+          <p>No ar, aperte <b>Z / X / C</b> (ou <b>1 / 2 / 3</b>), <b>Shift</b> ou dê um <b>2º toque em &uarr; / Espaço</b>! Pouse limpo para emendar o combo e encher o <b>Modo Radical x2</b>!</p>
         </article>
 
         <article class="instruction">
-          <div class="instruction-keys"><kbd>S</kbd><kbd>&darr;</kbd></div>
-          <h3>Abaixar e Queda rápida</h3>
-          <p>No chão, abaixe para passar sob placas suspensas. No ar, segure para descer rápido e cravar o pouso no ponto certo.</p>
+          <div class="instruction-keys"><span class="tag tag--ramp">Turbo &amp; Radical</span></div>
+          <h3>Esmagar + Quase! + Poderes</h3>
+          <p>Com <b>Super Turbo</b> ou <b>Modo Radical</b>, atropele caixas, placas e drones para quebrá-los! Pegue 🧲 <b>Ímã</b>, ⭐ <b>2X</b> e as letras <b>L-U-I-G-I</b>!</p>
         </article>
 
         <article class="instruction">
-          <div class="instruction-keys"><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd></div>
-          <h3>Manobras e 4 Esportes</h3>
-          <p>Cada esporte tem manobras e estilo próprios: <b>Skate</b> equilibrado, <b>Bicicleta</b> voa mais alto nas rampas, <b>Patinete</b> faz combos 25% mais rápidos e <b>Patins</b> tem <b>Pulo Duplo</b> no ar!</p>
-        </article>
-
-        <article class="instruction">
-          <div class="instruction-keys"><span class="tag tag--ramp">Rampa &amp; Grind</span></div>
-          <h3>Mega salto e Corrimãos</h3>
-          <p>Suba a curva da rampa e aperte <b>Pular no topo</b> para ganhar <b>Lip Boost</b>! Pouse sobre corrimãos para fazer <b>Grind</b> com faíscas e combo!</p>
-        </article>
-
-        <article class="instruction">
-          <div class="instruction-keys"><span class="tag tag--gold">4 Fases</span></div>
-          <h3>Mudança de Cenários</h3>
-          <p>Desbloqueie 🌇 <b>Skatepark</b> (0m), 🏙️ <b>Metrópole Neon</b> (600m), 🌴 <b>Praia &amp; Píer</b> (1400m) e 🚀 <b>Pista Cósmica</b> (2400m) ganhando +1 skate e +1.000 pts!</p>
+          <div class="instruction-keys"><span class="tag tag--gold">Oficina &amp; Missões</span></div>
+          <h3>Moedas, Loja e Fases</h3>
+          <p>Suas moedas ficam guardadas! Compre visuais, rastros, óculos, coroa e upgrades na <b>Oficina</b>. No modo <b>Fácil</b>, cair no buraco tira 1 vida; no <b>Difícil</b>, cair no buraco encerra a partida na hora!</p>
         </article>
       </div>
 
@@ -355,8 +512,9 @@
         <p class="screen-sub">Respire fundo, a pista continua aí</p>
       </div>
       <nav class="menu-buttons">
-        <button id="btn-resume" class="btn btn-primary btn-lg">Continuar <span class="btn-hint">P</span></button>
-        <button id="btn-pause-menu" class="btn btn-quiet">Sair para o menu</button>
+        <button type="button" id="btn-resume" class="btn btn-primary btn-lg">Continuar <span class="btn-hint">P</span></button>
+        <button type="button" id="btn-pause-restart" class="btn btn-ghost">Reiniciar corrida</button>
+        <button type="button" id="btn-pause-menu" class="btn btn-quiet">Sair para o menu</button>
       </nav>
     </section>
 
@@ -388,6 +546,8 @@
         </div>
       </div>
 
+      <p id="gameover-bank-summary" class="gameover-bank-summary"></p>
+
       <!-- Registro de Nome para o Placar -->
       <div id="gameover-register-box" class="score-register-box">
         <h3 class="register-title">🛹 Registre seu Nome no Placar!</h3>
@@ -411,20 +571,32 @@
 
       <nav class="menu-buttons">
         <button id="btn-restart" class="btn btn-primary btn-lg">Jogar novamente <span class="btn-hint">Enter</span></button>
-        <button id="btn-gameover-menu" class="btn btn-quiet">Menu principal</button>
+        <div class="menu-row">
+          <button id="btn-gameover-shop" class="btn btn-ghost">🛠️ Oficina (<span id="gameover-shop-coins">0</span> 🪙)</button>
+          <button id="btn-gameover-menu" class="btn btn-quiet">Menu principal</button>
+        </div>
       </nav>
     </section>
 
     <!-- ================= TELA: PLACAR DE LÍDERES ================= -->
     <section id="screen-leaderboard" class="screen hidden">
       <div class="screen-head">
-        <h2 class="screen-title">🏆 Placar de Líderes</h2>
+        <h2 class="screen-title"><em class="title-ico">🏆</em> Placar de Líderes</h2>
         <p class="screen-sub">Os maiores skatistas e recordes de todos os tempos!</p>
       </div>
 
-      <div class="leaderboard-tabs" role="tablist" aria-label="Tipo de placar">
-        <button type="button" id="tab-lb-global" class="lb-tab active" role="tab" aria-selected="true">🌎 Global (Todos)</button>
-        <button type="button" id="tab-lb-local" class="lb-tab" role="tab" aria-selected="false">📱 Neste aparelho</button>
+      <div class="leaderboard-controls-row">
+        <div class="leaderboard-tabs" role="tablist" aria-label="Tipo de placar">
+          <button type="button" id="tab-lb-global" class="lb-tab active" role="tab" aria-selected="true">🌎 Global</button>
+          <button type="button" id="tab-lb-local" class="lb-tab" role="tab" aria-selected="false">📱 Aparelho</button>
+        </div>
+        <div class="pill-group" id="lb-sport-filter" aria-label="Filtrar por esporte">
+          <button type="button" class="pill-opt active" data-lb-sport="all" aria-pressed="true" title="Todos os esportes">Todos</button>
+          <button type="button" class="pill-opt" data-lb-sport="skate" aria-pressed="false" title="Skate" aria-label="Filtrar por Skate">🛹</button>
+          <button type="button" class="pill-opt" data-lb-sport="bmx" aria-pressed="false" title="Bicicleta (BMX)" aria-label="Filtrar por Bicicleta">🚲</button>
+          <button type="button" class="pill-opt" data-lb-sport="scooter" aria-pressed="false" title="Patinete" aria-label="Filtrar por Patinete">🛴</button>
+          <button type="button" class="pill-opt" data-lb-sport="skates" aria-pressed="false" title="Patins" aria-label="Filtrar por Patins">🛼</button>
+        </div>
       </div>
       <p id="leaderboard-status" class="leaderboard-status">🌎 Placar universal — todos os jogadores</p>
 
@@ -451,6 +623,7 @@
 
   <script src="js/audio.js"></script>
   <script src="js/particles.js"></script>
+  <script src="js/progression.js"></script>
   <script src="js/character_manager.js"></script>
   <script src="js/game_physics.js"></script>
   <script src="js/game_world.js"></script>

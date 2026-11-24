@@ -7,6 +7,8 @@
       "badge": "Estilo Radical 3D",
       "description": "Luigi em sua versão oficial 3D com capacete SK8, camisa xadrez, skate street art e manobras radicais!",
       "renderMode": "sprite",
+      "bodyStyle": "rig",
+      "headSize": "normal",
       "portrait": "assets/portraits/portrait_luigi_3d.png",
       "sprites": {
         "skate": "assets/sprites/luigi_3d_skate.png",
@@ -18,6 +20,79 @@
         "velocidade": "Alta",
         "salto": "Super Alto",
         "manobras": "Épicas"
+      },
+      "width": 105,
+      "height": 130,
+      "duckHeight": 85
+    },
+    {
+      "id": "luigi_real",
+      "name": "Luigi Real",
+      "badge": "Clássico Foto",
+      "description": "Luigi em estilo realista clássico pronto para encarar corrimãos e mega rampas!",
+      "renderMode": "sprite",
+      "bodyStyle": "sprite",
+      "headSize": "normal",
+      "portrait": "assets/portraits/portrait_luigi_real.png",
+      "sprites": {
+        "skate": "assets/sprites/luigi_real_skate.png",
+        "duck": "assets/sprites/luigi_real_duck.png",
+        "jump": "assets/sprites/luigi_real_jump.png",
+        "trick": "assets/sprites/luigi_real_trick.png"
+      },
+      "stats": {
+        "velocidade": "Alta",
+        "salto": "Preciso",
+        "manobras": "Clássicas"
+      },
+      "width": 105,
+      "height": 130,
+      "duckHeight": 85
+    },
+    {
+      "id": "luna_radical",
+      "name": "Luna Radical",
+      "badge": "Estrela Neon",
+      "description": "Skatista cheia de energia, rabo de cavalo estilizado, jaqueta rosa-ciano e manobras elétricas!",
+      "renderMode": "sprite",
+      "bodyStyle": "custom",
+      "gender": "girl",
+      "skinTone": "medium",
+      "outfit": "pink_cyan",
+      "hairColor": "brown",
+      "accessory": "shades",
+      "headSize": "large",
+      "useHelmet": false,
+      "hasPhoto": false,
+      "stats": {
+        "velocidade": "Veloz",
+        "salto": "Ágil",
+        "manobras": "Estilosas"
+      },
+      "width": 105,
+      "height": 130,
+      "duckHeight": 85
+    },
+    {
+      "id": "leo_cosmic",
+      "name": "Léo Espacial",
+      "badge": "Viajante Cósmico",
+      "description": "Desbloqueie na Oficina! Traje galáctico roxo, antena espacial e muito estilo nas pistas!",
+      "renderMode": "sprite",
+      "bodyStyle": "custom",
+      "gender": "boy",
+      "skinTone": "deep",
+      "outfit": "galaxy_purple",
+      "hairColor": "black",
+      "accessory": "astro",
+      "headSize": "large",
+      "useHelmet": true,
+      "hasPhoto": false,
+      "unlockPrice": 750,
+      "stats": {
+        "velocidade": "Turbo",
+        "salto": "Cósmico",
+        "manobras": "Lendárias"
       },
       "width": 105,
       "height": 130,

@@ -7,10 +7,14 @@ class SoundSystem {
     this.master = null;
     this.muted = false;
     this.musicPlaying = false;
+    this.musicWanted = false;
     this.musicTimer = null;
+    this.musicStage = 0;
+    this.musicBoosted = false;
 
-    // Canais contínuos (rolamento, grind metálico e vento)
+    // Canais contínuos (rolamento, grind metálico e vento) + cache de buffers curtos de SFX
     this.noiseBuffer = null;
+    this._sfxBuffers = {};
     this.rollNode = null;
     this.rollFilter = null;
     this.rollGain = null;
@@ -89,6 +93,20 @@ class SoundSystem {
     return buffer;
   }
 
+  /** Cache lazy de buffers curtos de ruído para SFX (zero alocação por pulo/pouso/remada). */
+  getSfxNoiseBuffer(key, durationSec, shapeFn) {
+    if (!this.ctx) return null;
+    if (this._sfxBuffers[key]) return this._sfxBuffers[key];
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * durationSec));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      data[i] = (Math.random() * 2 - 1) * shapeFn(i / len);
+    }
+    this._sfxBuffers[key] = buf;
+    return buf;
+  }
+
   toggleMute() {
     this.muted = !this.muted;
     try {
@@ -100,9 +118,9 @@ class SoundSystem {
     }
 
     if (this.muted) {
-      this.stopMusic();
+      this.stopMusic(true);
       this.silenceLoops();
-    } else {
+    } else if (this.musicWanted && (!window.game || window.game.state === 'PLAYING')) {
       this.startMusic();
     }
     return this.muted;
@@ -162,7 +180,7 @@ class SoundSystem {
     if (!this.rollGain || !this.rollFilter || !this.ctx) return;
     const now = this.ctx.currentTime;
 
-    if (this.muted || !onGround || speedRatio <= 0.05) {
+    if (this.muted || !onGround || !Number.isFinite(speedRatio) || speedRatio <= 0.05) {
       this.rollGain.gain.setTargetAtTime(0, now, 0.04);
       this.isRolling = false;
       return;
@@ -346,7 +364,8 @@ class SoundSystem {
       return;
     }
 
-    const level = Math.max(0.2, Math.min(1.3, intensity));
+    const safeIntensity = Number.isFinite(intensity) ? intensity : 0.7;
+    const level = Math.max(0.2, Math.min(1.3, safeIntensity));
     const jitter = (Math.random() - 0.5) * 280;
     this.grindFilter.frequency.setTargetAtTime(2100 + level * 1150 + jitter, now, 0.03);
     this.grindGain.gain.setTargetAtTime(Math.min(0.36, 0.16 + level * 0.15), now, 0.02);
@@ -397,8 +416,10 @@ class SoundSystem {
       return;
     }
 
-    const speedFactor = Math.max(0, (speedRatio - 0.62) / 0.78);
-    const airFactor = Math.max(0, Math.min(1, (altitude - 70) / 260));
+    const safeSpeed = Number.isFinite(speedRatio) ? speedRatio : 0;
+    const safeAlt = Number.isFinite(altitude) ? altitude : 330;
+    const speedFactor = Math.max(0, (safeSpeed - 0.62) / 0.78);
+    const airFactor = Math.max(0, Math.min(1, (safeAlt - 70) / 260));
     const intensity = Math.min(1, speedFactor * 0.7 + airFactor * 0.55);
 
     const targetGain = intensity > 0.02 ? intensity * 0.16 : 0;
@@ -449,8 +470,8 @@ class SoundSystem {
       return;
     }
 
-    const u = Math.max(0, Math.min(1, progress));
-    const spd = Math.max(0.2, Math.min(1.4, speedNorm));
+    const u = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 0));
+    const spd = Math.max(0.2, Math.min(1.4, Number.isFinite(speedNorm) ? speedNorm : 0.6));
     const targetFreq = 250 + u * 540 + spd * 110;
     const targetGain = Math.min(0.32, (0.14 + u * 0.14) * spd);
 
@@ -463,7 +484,7 @@ class SoundSystem {
   // ==========================================================
 
   // Salto realista adaptado ao esporte ('skate' | 'bmx' | 'scooter' | 'skates')
-  playJump(sportId = 'skate') {
+  playJump(sportId = 'skate', isDoubleJump = false) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
 
@@ -524,28 +545,23 @@ class SoundSystem {
     }
 
     if (sportId === 'skates') {
-      // Impulso limpo e ágil de patins (funciona super bem também no pulo duplo!)
+      // Impulso limpo e ágil de patins (brilho agudo extra no Pulo Duplo!)
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(280, now);
-      osc.frequency.exponentialRampToValueAtTime(620, now + 0.09);
-      gain.gain.setValueAtTime(0.17, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.type = isDoubleJump ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(isDoubleJump ? 420 : 280, now);
+      osc.frequency.exponentialRampToValueAtTime(isDoubleJump ? 940 : 620, now + 0.095);
+      gain.gain.setValueAtTime(isDoubleJump ? 0.19 : 0.17, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
       osc.connect(gain);
       gain.connect(this.output());
       osc.start(now);
-      osc.stop(now + 0.11);
+      osc.stop(now + 0.12);
       return;
     }
 
     // Padrão Skate: 1. Estalo seco do tail batendo na pista (snap de madeira)
-    const snapLen = Math.floor(this.ctx.sampleRate * 0.055);
-    const snapBuf = this.ctx.createBuffer(1, snapLen, this.ctx.sampleRate);
-    const snapData = snapBuf.getChannelData(0);
-    for (let i = 0; i < snapLen; i++) {
-      snapData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / snapLen, 4);
-    }
+    const snapBuf = this.getSfxNoiseBuffer('jump_snap', 0.055, t => Math.pow(1 - t, 4));
     const snapSrc = this.ctx.createBufferSource();
     snapSrc.buffer = snapBuf;
 
@@ -579,13 +595,7 @@ class SoundSystem {
     woodOsc.stop(now + 0.085);
 
     // 3. Leve raspada da lixa no tênis (slide do ollie)
-    const gripLen = Math.floor(this.ctx.sampleRate * 0.07);
-    const gripBuf = this.ctx.createBuffer(1, gripLen, this.ctx.sampleRate);
-    const gripData = gripBuf.getChannelData(0);
-    for (let i = 0; i < gripLen; i++) {
-      const t = i / gripLen;
-      gripData[i] = (Math.random() * 2 - 1) * Math.sin(t * Math.PI) * 0.5;
-    }
+    const gripBuf = this.getSfxNoiseBuffer('jump_grip', 0.07, t => Math.sin(t * Math.PI) * 0.5);
     const gripSrc = this.ctx.createBufferSource();
     gripSrc.buffer = gripBuf;
 
@@ -608,15 +618,7 @@ class SoundSystem {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
 
-    const len = Math.floor(this.ctx.sampleRate * 0.11);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      const t = i / len;
-      const env = Math.sin(t * Math.PI) * (1 - t * 0.45);
-      data[i] = (Math.random() * 2 - 1) * env;
-    }
-
+    const buf = this.getSfxNoiseBuffer('push', 0.11, t => Math.sin(t * Math.PI) * (1 - t * 0.45));
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
 
@@ -693,13 +695,7 @@ class SoundSystem {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
 
-    const len = Math.floor(this.ctx.sampleRate * 0.045);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.5);
-    }
-
+    const buf = this.getSfxNoiseBuffer('board_flip', 0.045, t => Math.pow(1 - t, 3.5));
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
 
@@ -880,17 +876,11 @@ class SoundSystem {
     else if (sportId === 'scooter') cutoff *= 1.35;
     else if (sportId === 'skates') cutoff *= 1.15;
 
+    const landBuf = this.getSfxNoiseBuffer('land_hit', 0.085, t => Math.pow(1 - t, 3.2));
     hitOffsets.forEach((offset, idx) => {
       const t = now + offset;
-      const bufferSize = Math.floor(this.ctx.sampleRate * 0.085);
-      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3.2);
-      }
-
       const src = this.ctx.createBufferSource();
-      src.buffer = buffer;
+      src.buffer = landBuf;
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'lowpass';
@@ -1006,74 +996,289 @@ class SoundSystem {
     osc.stop(now + 0.06);
   }
 
+  /** Impacto crocante quando o skatista esmaga obstáculos no Turbo/Radical. */
+  playSmash() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const buf = this.getSfxNoiseBuffer('smash', 0.14, t => Math.pow(1 - t, 1.8));
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(900, now);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.32, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.output());
+    src.start(now);
+
+    const osc = this.ctx.createOscillator();
+    const oGain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(260, now);
+    osc.frequency.exponentialRampToValueAtTime(65, now + 0.12);
+    oGain.gain.setValueAtTime(0.28, now);
+    oGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(oGain);
+    oGain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
+  /** Mola alegre do Trampolim. */
+  playBounce() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(210, now);
+    osc.frequency.exponentialRampToValueAtTime(760, now + 0.22);
+    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.26);
+  }
+
+  /** Fanfarra explosiva ao ativar o Modo Radical! */
+  playFeverStart() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const freqs = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+    freqs.forEach((f, idx) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const t = now + idx * 0.045;
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, t);
+      gain.gain.setValueAtTime(0.20, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(t);
+      osc.stop(t + 0.30);
+    });
+  }
+
+  /** Nota ascendente para cada letra de L-U-I-G-I. */
+  playLetter(index = 0) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const scale = [587.33, 659.25, 783.99, 880.0, 1046.5];
+    const f = scale[index % scale.length];
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(f, now);
+    osc.frequency.exponentialRampToValueAtTime(f * 1.25, now + 0.14);
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
+  /** Whoosh rápido ao passar raspando por um obstáculo (Quase!). */
+  playNearMiss() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(720, now);
+    osc.frequency.exponentialRampToValueAtTime(1180, now + 0.09);
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  /** Jingle rápido de missão/troféu concluído. */
+  playMissionComplete() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    [659.25, 783.99, 1046.5].forEach((f, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const t = now + i * 0.065;
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, t);
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(t);
+      osc.stop(t + 0.24);
+    });
+  }
+
+  /** Fanfarra de Baú de Nível ou compra na Oficina. */
+  playChestOpen() {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98].forEach((f, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const t = now + i * 0.055;
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, t);
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.30);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(t);
+      osc.stop(t + 0.32);
+    });
+  }
+
+  setMusicContext(stageIndex = 0, boosted = false) {
+    this.musicStage = Math.max(0, Math.min(3, Math.floor(stageIndex || 0)));
+    this.musicBoosted = !!boosted;
+  }
+
   // ==========================================================
-  // Trilha sonora procedural energética estilo Skate Synth
+  // Trilha sonora procedural dinâmica por Bioma + Turbo/Radical
   // ==========================================================
 
   startMusic() {
+    this.musicWanted = true;
     if (this.muted || this.musicPlaying || !this.ctx) return;
     this.musicPlaying = true;
 
-    const bassline = [
-      110, 110, 130.81, 146.83,
-      110, 110, 164.81, 146.83,
-      98,  98,  123.47, 146.83,
-      130.81, 146.83, 164.81, 196.00
+    const themes = [
+      // Fase 1: Skatepark Rock-Synth animado (Lá menor)
+      {
+        bass: [110, 110, 130.81, 146.83, 110, 110, 164.81, 146.83, 98, 98, 123.47, 146.83, 130.81, 146.83, 164.81, 196.0],
+        lead: [440, 0, 523.25, 587.33, 659.25, 0, 523.25, 440, 392, 0, 493.88, 587.33, 659.25, 783.99, 659.25, 523.25],
+        wave: 'triangle',
+        stepMs: 155
+      },
+      // Fase 2: Metrópole Cyberpunk Neon (Synthwave pulsante)
+      {
+        bass: [98, 98, 196, 98, 116.54, 116.54, 233.08, 116.54, 130.81, 130.81, 261.63, 130.81, 146.83, 146.83, 196, 146.83],
+        lead: [392, 587.33, 466.16, 783.99, 466.16, 698.46, 587.33, 466.16, 523.25, 783.99, 622.25, 523.25, 587.33, 880, 783.99, 698.46],
+        wave: 'sawtooth',
+        stepMs: 145
+      },
+      // Fase 3: Praia & Píer Tropical (Alegre marimba/solar)
+      {
+        bass: [130.81, 0, 164.81, 196.0, 146.83, 0, 196.0, 220.0, 164.81, 0, 196.0, 246.94, 196.0, 164.81, 146.83, 130.81],
+        lead: [523.25, 659.25, 783.99, 659.25, 880, 783.99, 659.25, 523.25, 587.33, 739.99, 880, 783.99, 1046.5, 880, 783.99, 659.25],
+        wave: 'sine',
+        stepMs: 150
+      },
+      // Fase 4: Pista Cósmica das Estrelas (Espacial etéreo)
+      {
+        bass: [82.41, 164.81, 110, 164.81, 98, 196, 123.47, 196, 110, 220, 146.83, 220, 130.81, 261.63, 196, 164.81],
+        lead: [659.25, 830.61, 987.77, 1318.5, 587.33, 783.99, 987.77, 1174.66, 659.25, 880, 1046.5, 1318.5, 783.99, 987.77, 1174.66, 1567.98],
+        wave: 'triangle',
+        stepMs: 142
+      }
     ];
+
     let noteIdx = 0;
 
     const playNote = () => {
       if (!this.musicPlaying || this.muted || !this.ctx) return;
 
+      const theme = themes[this.musicStage % themes.length] || themes[0];
+      const delay = this.musicBoosted ? Math.max(116, theme.stepMs - 24) : theme.stepMs;
+
+      // Evita enfileirar osciladores enquanto o AudioContext ainda está suspenso
+      if (this.ctx.state !== 'running') {
+        this.musicTimer = setTimeout(playNote, delay);
+        return;
+      }
+
       const now = this.ctx.currentTime;
       const step = noteIdx % 16;
-      const freq = bassline[step];
+      const freq = theme.bass[step];
+      const leadFreq = theme.lead[step];
 
-      // Baixo synthwave quente
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      const filter = this.ctx.createBiquadFilter();
+      if (freq > 0) {
+        // Baixo synthwave quente
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
 
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(freq, now);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, now);
 
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(step % 4 === 0 ? 520 : 380, now);
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime((step % 4 === 0 ? 540 : 400) + (this.musicBoosted ? 260 : 0), now);
 
-      gain.gain.setValueAtTime(0.062, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+        gain.gain.setValueAtTime(0.056, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
 
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.output());
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.output());
 
-      osc.start(now);
-      osc.stop(now + 0.18);
+        osc.start(now);
+        osc.stop(now + 0.17);
+      }
 
-      // Bumbo leve nos tempos fortes para dar pulso de skate
+      if (leadFreq > 0) {
+        const lOsc = this.ctx.createOscillator();
+        const lGain = this.ctx.createGain();
+        lOsc.type = theme.wave;
+        lOsc.frequency.setValueAtTime(leadFreq, now);
+        lGain.gain.setValueAtTime(this.musicBoosted ? 0.044 : 0.028, now);
+        lGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        lOsc.connect(lGain);
+        lGain.connect(this.output());
+        lOsc.start(now);
+        lOsc.stop(now + 0.15);
+      }
+
+      // Bumbo nos tempos fortes + chimbal leve nos contratempos
       if (step % 4 === 0) {
         const kick = this.ctx.createOscillator();
         const kGain = this.ctx.createGain();
         kick.type = 'sine';
-        kick.frequency.setValueAtTime(115, now);
+        kick.frequency.setValueAtTime(118, now);
         kick.frequency.exponentialRampToValueAtTime(42, now + 0.09);
-        kGain.gain.setValueAtTime(0.09, now);
+        kGain.gain.setValueAtTime(0.085, now);
         kGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
         kick.connect(kGain);
         kGain.connect(this.output());
         kick.start(now);
         kick.stop(now + 0.11);
+      } else if (step % 4 === 2 || (this.musicBoosted && step % 2 === 1)) {
+        const hatBuf = this.getSfxNoiseBuffer('music_hat', 0.032, t => Math.pow(1 - t, 3.5));
+        if (hatBuf) {
+          const hat = this.ctx.createBufferSource();
+          hat.buffer = hatBuf;
+          const hFilter = this.ctx.createBiquadFilter();
+          hFilter.type = 'highpass';
+          hFilter.frequency.setValueAtTime(6800, now);
+          const hGain = this.ctx.createGain();
+          hGain.gain.setValueAtTime(this.musicBoosted ? 0.022 : 0.014, now);
+          hGain.gain.exponentialRampToValueAtTime(0.001, now + 0.032);
+          hat.connect(hFilter);
+          hFilter.connect(hGain);
+          hGain.connect(this.output());
+          hat.start(now);
+        }
       }
 
       noteIdx++;
-      this.musicTimer = setTimeout(playNote, 155);
+      this.musicTimer = setTimeout(playNote, delay);
     };
 
     playNote();
   }
 
-  stopMusic() {
+  stopMusic(keepWanted = false) {
     this.musicPlaying = false;
+    if (!keepWanted) this.musicWanted = false;
     if (this.musicTimer) {
       clearTimeout(this.musicTimer);
       this.musicTimer = null;

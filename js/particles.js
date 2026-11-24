@@ -248,6 +248,94 @@ class ParticleSystem {
     });
   }
 
+  /** Rastro personalizado equipado na Oficina (arco-íris, fogo, raio, estrelas). */
+  emitCustomTrail(x, y, colors = ['34, 211, 238']) {
+    const palette = Array.isArray(colors) && colors.length ? colors : ['34, 211, 238'];
+    const rawColor = palette[Math.floor(Math.random() * palette.length)];
+    const color = hexToRgb(rawColor);
+    this.push({
+      kind: Math.random() < 0.5 ? 'streak' : 'glow',
+      x: x - 8,
+      y: y + (Math.random() * 24 - 12),
+      vx: -(Math.random() * 4.5 + 3.2),
+      vy: Math.random() * 1.4 - 0.7,
+      size: Math.random() * 4.4 + 2.4,
+      grow: -0.06,
+      color,
+      alpha: 0.88,
+      decay: 0.055,
+      glow: true
+    });
+  }
+
+  /** Chuva festiva de confetes (palavra completa, novo recorde, Modo Radical). */
+  emitConfetti(x, y, count = 30) {
+    const palette = ['244, 63, 126', '251, 191, 36', '52, 211, 153', '34, 211, 238', '168, 85, 247'];
+    for (let i = 0; i < count; i++) {
+      const ang = -Math.PI * 0.5 + (Math.random() - 0.5) * Math.PI * 1.3;
+      const spd = 3.5 + Math.random() * 7.5;
+      this.push({
+        kind: 'square',
+        x: x + (Math.random() * 36 - 18),
+        y: y + (Math.random() * 20 - 10),
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 2,
+        size: Math.random() * 5 + 4,
+        grow: 0,
+        color: palette[i % palette.length],
+        alpha: 1,
+        decay: 0.016 + Math.random() * 0.01,
+        gravity: 0.22,
+        drag: 0.97,
+        rot: Math.random() * Math.PI * 2,
+        spin: (Math.random() - 0.5) * 0.4,
+        glow: false
+      });
+    }
+  }
+
+  /** Estilhaços quando o skatista quebra um obstáculo no Turbo ou Modo Radical. */
+  emitObstacleSmash(x, y, color = '#fbbf24') {
+    this.emitShockwave(x, y, color, 88);
+    this.emitSparks(x, y, 22, color);
+    const debrisColors = ['148, 163, 184', '71, 85, 105', '251, 191, 36'];
+    for (let i = 0; i < 14; i++) {
+      this.push({
+        kind: 'square',
+        x: x + (Math.random() * 24 - 12),
+        y: y + (Math.random() * 24 - 12),
+        vx: 2 + Math.random() * 8,
+        vy: -(3 + Math.random() * 7),
+        size: Math.random() * 7 + 4,
+        grow: 0,
+        color: debrisColors[i % debrisColors.length],
+        alpha: 0.95,
+        decay: 0.02,
+        gravity: 0.34,
+        rot: Math.random() * Math.PI,
+        spin: (Math.random() - 0.5) * 0.45,
+        glow: false
+      });
+    }
+  }
+
+  /** Brilho sutil ao puxar moeda pelo Ímã. */
+  emitMagnetPull(x, y) {
+    this.push({
+      kind: 'glow',
+      x,
+      y,
+      vx: (Math.random() - 0.5) * 1.2,
+      vy: (Math.random() - 0.5) * 1.2,
+      size: 2.8,
+      grow: -0.08,
+      color: '244, 63, 126',
+      alpha: 0.75,
+      decay: 0.09,
+      glow: true
+    });
+  }
+
   // ---- Novos emissores (Contrato Compartilhado) ----------------------------
 
   /** Faíscas metálicas contínuas ao deslizar (grind) no corrimão. */
@@ -430,16 +518,18 @@ class ParticleSystem {
 
   // ---- Texto flutuante -----------------------------------------------------
 
-  addFloatingText(text, x, y, color = '#fbbf24', size = 22) {
+  addFloatingText(text, x, y, color = '#fbbf24', size = 20) {
+    const cappedSize = Math.min(22, size || 20);
     let slot = y;
+    const minSlot = y - 110;
     let moved = true;
     let guard = 0;
-    while (moved && guard++ < 16) {
+    while (moved && guard++ < 12) {
       moved = false;
       for (const t of this.texts) {
-        if (Math.abs(t.x - x) < 220 && Math.abs(t.y - slot) < 34) {
-          slot = t.y - 36;
-          moved = true;
+        if (Math.abs(t.x - x) < 220 && Math.abs(t.y - slot) < 30) {
+          slot = Math.max(minSlot, t.y - 32);
+          moved = slot > minSlot;
           break;
         }
       }
@@ -451,13 +541,13 @@ class ParticleSystem {
       y: slot,
       vy: -1.5,
       color,
-      size,
+      size: cappedSize,
       life: 1,
-      decay: 0.016,
+      decay: 0.02,
       scale: 0.4,
       age: 0
     });
-    if (this.texts.length > 14) this.texts.shift();
+    while (this.texts.length > 3) this.texts.shift();
   }
 
   // ---- Ciclo ---------------------------------------------------------------
@@ -617,9 +707,14 @@ class ParticleSystem {
 
 function hexToRgb(hex) {
   if (!hex || typeof hex !== 'string') return '251, 191, 36';
-  if (!hex.startsWith('#')) return hex;
-  const v = hex.slice(1);
-  const n = parseInt(v.length === 3 ? v.split('').map(c => c + c).join('') : v, 16);
+  const trimmed = hex.trim();
+  const rgbMatch = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(trimmed);
+  if (rgbMatch) return `${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}`;
+  if (!trimmed.startsWith('#')) return trimmed;
+  const v = trimmed.slice(1);
+  const full = v.length === 3 ? v.split('').map(c => c + c).join('') : v;
+  const n = parseInt(full, 16);
+  if (Number.isNaN(n)) return '251, 191, 36';
   return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
 }
 
