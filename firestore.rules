@@ -10,8 +10,8 @@ rules_version = '2';
 // 1. Collection: leaderboard
 //    Document ID: {entryId} (auto-gerado pelo Firestore)
 //    Acesso: Leitura pública limitada (`get` livre; `list` com `limit <= 100`).
-//            Criação pública (visitante com 10 campos) ou autenticada
-//            (12 campos incluindo `uid` e `accountName`), 100% imutável.
+//            Criação pública (visitante) ou autenticada (com `uid` e `accountName`),
+//            com campos opcionais `avatarThumb` e `showcase`, 100% imutável.
 //    Campos obrigatórios (10):
 //      - name: string (1..24 chars) - Apelido do jogador
 //      - score: int (1..9999999) - Pontuação final da partida
@@ -26,6 +26,12 @@ rules_version = '2';
 //    Campos opcionais autenticados (ambos obrigatórios juntos quando enviados):
 //      - uid: string (== request.auth.uid, <= 128 chars) - UID verificado
 //      - accountName: string (1..30 chars) - Nome da conta/família
+//    Campos opcionais (permitidos para visitantes e autenticados):
+//      - avatarThumb: string (20..25000 chars, data:image/(jpeg|png|webp);base64) - Miniatura 96x96 do personagem
+//      - showcase: map { rank (1..999), gear (list <= 16), trails (list <= 16),
+//                        accessories (list <= 16), achievements (list <= 30),
+//                        upgrades { magnet, turbo, fever, coinBonus (0..4) },
+//                        equipped { gear, trail, accessory (1..32 chars) } }
 //
 // 2. Collection: users
 //    Document ID: {uid} (UID do Firebase Auth)
@@ -49,7 +55,7 @@ rules_version = '2';
 //      - coinsBank: int (0..99999999) - Saldo de moedas do personagem
 //      - rankLevel: int (1..999) - Nível de patente
 //      - missionsCompletedTotal: int (0..999999) - Total de missões concluídas
-//      - unlockedStageIndex: int (0..5) - Maior fase desbloqueada
+//      - unlockedStageIndex: int (0..6) - Maior fase desbloqueada
 //      - highScore: int (0..99999999) - Recorde modo livre
 //      - highScoreTime60: int (0..99999999) - Recorde modo 60s
 //      - preferredSport: string ('skate' | 'bmx' | 'scooter' | 'skates')
@@ -128,7 +134,42 @@ service cloud.firestore {
     // Validadores de Domínio (Domain Validators)
     // ===============================================================
 
-    // Valida entrada do Placar Universal (10 campos base ou 12 campos com conta autenticada)
+    // Valida miniatura opcional (`avatarThumb`) no Placar Universal
+    function isValidLeaderboardAvatarThumb(val) {
+      return isValidString(val, 20, 25000) &&
+             val.matches('^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$');
+    }
+
+    // Valida vitrine opcional (`showcase`) no Placar Universal
+    function isValidLeaderboardShowcase(showcase) {
+      let keys = [
+        'rank',
+        'gear',
+        'trails',
+        'accessories',
+        'upgrades',
+        'equipped',
+        'achievements'
+      ];
+      let equippedKeys = ['gear', 'trail', 'accessory'];
+      return showcase is map &&
+             showcase.keys().hasAll(keys) &&
+             showcase.keys().hasOnly(keys) &&
+             isValidIntRange(showcase.rank, 1, 999) &&
+             isValidList(showcase.gear, 16) &&
+             isValidList(showcase.trails, 16) &&
+             isValidList(showcase.accessories, 16) &&
+             isValidList(showcase.achievements, 30) &&
+             isValidProfileUpgrades(showcase.upgrades) &&
+             showcase.equipped is map &&
+             showcase.equipped.keys().hasAll(equippedKeys) &&
+             showcase.equipped.keys().hasOnly(equippedKeys) &&
+             isValidString(showcase.equipped.gear, 1, 32) &&
+             isValidString(showcase.equipped.trail, 1, 32) &&
+             isValidString(showcase.equipped.accessory, 1, 32);
+    }
+
+    // Valida entrada do Placar Universal (10 campos base + opcionais de conta, avatarThumb e showcase)
     function isValidLeaderboardEntry(data) {
       let baseFields = [
         'name',
@@ -142,7 +183,7 @@ service cloud.firestore {
         'time',
         'createdAt'
       ];
-      let authFields = [
+      let allowedFields = [
         'name',
         'score',
         'distance',
@@ -154,7 +195,9 @@ service cloud.firestore {
         'time',
         'createdAt',
         'uid',
-        'accountName'
+        'accountName',
+        'avatarThumb',
+        'showcase'
       ];
       let hasAuthMeta = ('uid' in data) || ('accountName' in data);
       let validAuthMeta = !hasAuthMeta || (
@@ -165,8 +208,10 @@ service cloud.firestore {
         data.uid.size() <= 128 &&
         isValidString(data.accountName, 1, 30)
       );
+      let validAvatarThumb = !('avatarThumb' in data) || isValidLeaderboardAvatarThumb(data.avatarThumb);
+      let validShowcase = !('showcase' in data) || isValidLeaderboardShowcase(data.showcase);
 
-      return hasOnlyAllowedFields(authFields) &&
+      return hasOnlyAllowedFields(allowedFields) &&
              hasRequiredFields(baseFields) &&
              isValidString(data.name, 1, 24) &&
              isValidIntRange(data.score, 1, 9999999) &&
@@ -178,7 +223,9 @@ service cloud.firestore {
              isValidString(data.date, 4, 20) &&
              isValidString(data.time, 4, 12) &&
              isServerTimestamp(data.createdAt) &&
-             validAuthMeta;
+             validAuthMeta &&
+             validAvatarThumb &&
+             validShowcase;
     }
 
     // Valida documento raiz da conta/família em /users/{uid}
@@ -339,7 +386,7 @@ service cloud.firestore {
              isValidIntRange(data.coinsBank, 0, 99999999) &&
              isValidIntRange(data.rankLevel, 1, 999) &&
              isValidIntRange(data.missionsCompletedTotal, 0, 999999) &&
-             isValidIntRange(data.unlockedStageIndex, 0, 5) &&
+             isValidIntRange(data.unlockedStageIndex, 0, 6) &&
              isValidIntRange(data.highScore, 0, 99999999) &&
              isValidIntRange(data.highScoreTime60, 0, 99999999) &&
              isValidSportId(data.preferredSport) &&
@@ -371,7 +418,7 @@ service cloud.firestore {
                      request.query.limit > 0 &&
                      request.query.limit <= 100;
 
-      // Criação pública (10 campos) ou autenticada (12 campos com uid == request.auth.uid)
+      // Criação pública ou autenticada (uid == request.auth.uid), com opcionais avatarThumb e showcase
       allow create: if isValidLeaderboardEntry(request.resource.data);
 
       // Placar 100% imutável: ninguém pode alterar ou apagar recordes

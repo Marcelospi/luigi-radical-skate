@@ -309,6 +309,7 @@ class GameWorld {
     this.obstacles = [];
     this.collectibles = [];
     this.cameos = [];
+    this.portals = [];
 
     this.scroll = 0;
     this.time = 0;
@@ -322,6 +323,9 @@ class GameWorld {
     this._lastTurboDist = -1000;
     this._nextCameoDist = 520 + Math.random() * 160;
     this._lastCameoType = '';
+    this._nextPortalScore = 15000;
+    this.voxelTimer = 0;
+    this.voxelDuration = 1080;
 
     this.recordDistance = Math.max(0, Math.floor(opts.recordDistance || 0));
     this.recordPassed = false;
@@ -430,6 +434,7 @@ class GameWorld {
     this.updateObstacles(speed, player);
     this.updateCollectibles(speed, player);
     this.updateCameos(speed, player);
+    this.updatePortals(speed, player);
     this.updateRecordFlag(player);
     this.updateAmbient(speed);
     this.generate(player);
@@ -443,6 +448,82 @@ class GameWorld {
       lp.cx -= speed;
       lp.glowPhase = (lp.glowPhase || 0) + 0.09;
       if (lp.cx + lp.radius < -320) this.loops.splice(i, 1);
+    }
+  }
+
+  /** Portal da Fase Bônus temporária "Dimensão Bloco" (estilo voxel/blocos após pontuação alta). */
+  spawnBlockPortal(x = 1320) {
+    const portal = {
+      x,
+      y: this.groundY - 134,
+      width: 72,
+      height: 134,
+      used: false,
+      anim: 0
+    };
+    this.portals.push(portal);
+    return portal;
+  }
+
+  updatePortals(speed, player) {
+    if (!Array.isArray(this.portals)) this.portals = [];
+
+    // Temporizador da Dimensão Bloco ativa
+    if (this.voxelTimer > 0) {
+      this.voxelTimer--;
+      player.voxelTimer = this.voxelTimer;
+      player.voxelDuration = this.voxelDuration;
+      if (this.voxelTimer === 0) {
+        player.invincibleTimer = Math.max(player.invincibleTimer || 0, 60);
+        if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
+        if (window.particleSystem) {
+          window.particleSystem.emitShockwave?.(player.x + player.width * 0.5, player.y + 40, '#22d3ee', 120);
+          window.particleSystem.addFloatingText?.('✨ VOLTOU À PISTA NORMAL!', player.x + player.width * 0.5, player.y - 72, '#22d3ee', 24);
+        }
+        if (window.game) window.game.flash('power');
+      }
+    }
+
+    // Gera o portal quando o jogador atinge a pontuação alta da corrida
+    if (!player.isGameOver && !player.isInLoop && this.voxelTimer <= 0 && this.portals.length === 0 && (player.score || 0) >= (this._nextPortalScore || 15000)) {
+      const hasSolidAhead = this.platforms.some(p => this.isPlatformSolid(p) && p.x <= 1320 && p.x + p.width >= 1390);
+      if (hasSolidAhead) {
+        this.spawnBlockPortal(1320);
+        if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
+      }
+    }
+
+    const pHit = player.getHitbox();
+    for (let i = this.portals.length - 1; i >= 0; i--) {
+      const pt = this.portals[i];
+      pt.x -= speed;
+      pt.anim = (pt.anim || 0) + 0.12;
+
+      if (!pt.used && !player.isGameOver) {
+        const hit = pHit.x < pt.x + pt.width && pHit.x + pHit.w > pt.x && pHit.y < pt.y + pt.height && pHit.y + pHit.h > pt.y;
+        if (hit) {
+          pt.used = true;
+          this.voxelTimer = this.voxelDuration || 1080;
+          player.voxelTimer = this.voxelTimer;
+          player.voxelDuration = this.voxelDuration || 1080;
+          player.invincibleTimer = Math.max(player.invincibleTimer || 0, 50);
+          this._nextPortalScore = Math.max((this._nextPortalScore || 15000) + 20000, Math.floor((player.score || 0) + 18000));
+
+          if (window.game) {
+            window.game.triggerHitstop?.(45);
+            window.game.camera?.shake?.(10);
+            window.game.flash?.('power');
+          }
+          if (window.soundSystem && window.soundSystem.playStageClear) window.soundSystem.playStageClear();
+          if (window.particleSystem) {
+            window.particleSystem.emitShockwave?.(pt.x + pt.width * 0.5, pt.y + pt.height * 0.5, '#a855f7', 160);
+            window.particleSystem.emitConfetti?.(player.x + player.width * 0.5, player.y, 38);
+            window.particleSystem.addFloatingText?.('🧱 DIMENSÃO BLOCO! PONTOS x2!', player.x + player.width * 0.5, player.y - 78, '#a855f7', 26);
+          }
+        }
+      }
+
+      if (pt.x + pt.width < -160) this.portals.splice(i, 1);
     }
   }
 
@@ -3094,6 +3175,10 @@ class GameWorld {
   }
 
   drawBackground(ctx, W, H, camY = 0) {
+    if (this.voxelTimer > 0) {
+      this.drawVoxelBackground(ctx, W, H, camY);
+      return;
+    }
     const blend = this.getBiomeBlend();
     const { current, next, t } = blend;
     this.drawSky(ctx, W, H, camY, blend);
@@ -3418,6 +3503,244 @@ class GameWorld {
     ctx.restore();
   }
 
+  /** Cenário completo da Fase Bônus "Dimensão Bloco" (céu quadrado, nuvens, montanhas e árvores voxel). */
+  drawVoxelBackground(ctx, W, H, camY = 0) {
+    const horizon = this.groundY - camY * 0.25;
+    // Céu azul bloco clássico
+    const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+    sky.addColorStop(0, '#38bdf8');
+    sky.addColorStop(0.6, '#7dd3fc');
+    sky.addColorStop(1, '#bae6fd');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    // Sol quadrado pixelado
+    const sx = W * 0.8;
+    const sy = Math.max(48, horizon - 335);
+    ctx.fillStyle = 'rgba(254, 240, 138, 0.28)';
+    ctx.fillRect(sx - 52, sy - 52, 104, 104);
+    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(sx - 36, sy - 36, 72, 72);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(sx - 24, sy - 24, 48, 48);
+
+    // Nuvens brancas retangulares estilo bloco
+    const cloudScroll = (this.scroll * 0.08) % (W + 320);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    for (let i = 0; i < 6; i++) {
+      const cx = ((i * 270 - cloudScroll) % (W + 320) + (W + 320)) % (W + 320) - 160;
+      const cy = 54 + (i % 3) * 44;
+      const cw = 96 + (i % 2) * 44;
+      ctx.fillRect(cx, cy, cw, 22);
+      ctx.fillRect(cx + 18, cy - 12, cw - 36, 12);
+    }
+
+    // Montanhas degrau em blocos (longe)
+    const hillScroll = (this.scroll * 0.14) % 420;
+    for (let x = -hillScroll - 210; x < W + 420; x += 420) {
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(x, horizon - 96, 180, 96);
+      ctx.fillRect(x + 24, horizon - 144, 132, 48);
+      ctx.fillRect(x + 48, horizon - 180, 84, 36);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(x, horizon - 96, 180, 14);
+      ctx.fillRect(x + 24, horizon - 144, 132, 14);
+      ctx.fillRect(x + 48, horizon - 180, 84, 14);
+
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(x + 220, horizon - 72, 160, 72);
+      ctx.fillRect(x + 244, horizon - 108, 112, 36);
+      ctx.fillStyle = '#16a34a';
+      ctx.fillRect(x + 220, horizon - 72, 160, 12);
+      ctx.fillRect(x + 244, horizon - 108, 112, 12);
+    }
+
+    // Árvores quadradas voxel (tronco marrom + copa em blocos verdes)
+    const treeScroll = (this.scroll * 0.34) % 280;
+    for (let x = -treeScroll; x < W + 280; x += 280) {
+      const tx = Math.floor(x + 60);
+      // Tronco
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(tx, horizon - 76, 22, 76);
+      ctx.fillStyle = '#92400e';
+      ctx.fillRect(tx + 4, horizon - 76, 6, 76);
+      // Copa quadrada
+      ctx.fillStyle = '#15803d';
+      ctx.fillRect(tx - 32, horizon - 122, 86, 48);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(tx - 20, horizon - 146, 62, 32);
+      ctx.fillStyle = '#4ade80';
+      ctx.fillRect(tx - 10, horizon - 142, 18, 14);
+      ctx.fillRect(tx + 18, horizon - 114, 16, 14);
+    }
+  }
+
+  /** Renderiza o Portal de Obsidiana roxo que leva para a Dimensão Bloco. */
+  drawPortals(ctx) {
+    if (!Array.isArray(this.portals) || this.portals.length === 0) return;
+    for (const pt of this.portals) {
+      const { x, y, width: w, height: h } = pt;
+      const pulse = 0.72 + Math.sin(this.time * 0.22) * 0.28;
+      ctx.save();
+
+      // Halo roxo vibrante
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const glow = ctx.createRadialGradient(x + w * 0.5, y + h * 0.5, 10, x + w * 0.5, y + h * 0.5, h * 0.85);
+      glow.addColorStop(0, `rgba(168, 85, 247, ${(0.55 * pulse).toFixed(3)})`);
+      glow.addColorStop(1, 'rgba(168, 85, 247, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(x - 60, y - 40, w + 120, h + 80);
+      ctx.restore();
+
+      // Moldura em blocos de obsidiana preta/roxa
+      const blk = 16;
+      ctx.fillStyle = '#1e1b4b';
+      ctx.strokeStyle = '#09071a';
+      ctx.lineWidth = 2;
+      ctx.fillRect(x, y, w, blk);
+      ctx.strokeRect(x, y, w, blk);
+      ctx.fillRect(x, y + h - blk, w, blk);
+      ctx.strokeRect(x, y + h - blk, w, blk);
+      ctx.fillRect(x, y, blk, h);
+      ctx.strokeRect(x, y, blk, h);
+      ctx.fillRect(x + w - blk, y, blk, h);
+      ctx.strokeRect(x + w - blk, y, blk, h);
+
+      // Vórtice pixelado roxo interno
+      const ix = x + blk;
+      const iy = y + blk;
+      const iw = w - blk * 2;
+      const ih = h - blk * 2;
+      const vg = ctx.createLinearGradient(ix, iy, ix + iw, iy + ih);
+      vg.addColorStop(0, '#c084fc');
+      vg.addColorStop(0.5, '#7e22ce');
+      vg.addColorStop(1, '#e879f9');
+      ctx.fillStyle = vg;
+      ctx.globalAlpha = 0.86;
+      ctx.fillRect(ix, iy, iw, ih);
+
+      // Quadradinhos flutuantes do vórtice
+      ctx.fillStyle = '#f5d0fe';
+      for (let k = 0; k < 6; k++) {
+        const px = ix + 4 + ((k * 17 + Math.floor(this.time * 1.4)) % Math.max(8, iw - 10));
+        const py = iy + 6 + ((k * 29 + Math.floor(this.time * 1.9)) % Math.max(8, ih - 12));
+        ctx.fillRect(px, py, 7, 7);
+      }
+      ctx.globalAlpha = 1;
+
+      this._drawCameoTag(ctx, x + w * 0.5, y - 16, '🟣 PORTAL BLOCO x2!', '#a855f7');
+      ctx.restore();
+    }
+  }
+
+  /** Pista pixelada em blocos de grama + terra (Dimensão Bloco). */
+  drawVoxelPlatform(ctx, p) {
+    const x = p.x + (p.shakeOffset || 0);
+    const y = p.y + (p.fallY || 0);
+    const w = p.width;
+    const h = TRACK.DEPTH;
+    const bs = 28;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+
+    // Base terra escura
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(x, y, w, h);
+
+    // Grade de blocos de terra + pedra
+    for (let row = 0; row * bs < h; row++) {
+      for (let col = 0; col * bs < w + bs; col++) {
+        const bx = x + col * bs;
+        const by = y + row * bs;
+        if (row === 0) {
+          // Bloco superior: grama verde viva sobre terra
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(bx, by, bs, bs);
+          ctx.fillStyle = ((col % 2) === 0) ? '#22c55e' : '#16a34a';
+          ctx.fillRect(bx, by, bs, 10);
+          ctx.fillStyle = '#4ade80';
+          ctx.fillRect(bx + 2, by, bs - 4, 4);
+          // Dentes pixelados da grama caindo na terra
+          ctx.fillStyle = '#16a34a';
+          ctx.fillRect(bx + 4, by + 10, 6, 5);
+          ctx.fillRect(bx + 16, by + 10, 8, 4);
+        } else {
+          const isStone = row >= 3;
+          ctx.fillStyle = isStone
+            ? (((col + row) % 2 === 0) ? '#475569' : '#334155')
+            : (((col + row) % 2 === 0) ? '#78350f' : '#6b2f0e');
+          ctx.fillRect(bx, by, bs, bs);
+          // Pontinhos de textura pixelada
+          ctx.fillStyle = isStone ? 'rgba(148,163,184,0.22)' : 'rgba(180,83,9,0.28)';
+          ctx.fillRect(bx + 5, by + 6, 6, 6);
+          ctx.fillRect(bx + 16, by + 16, 5, 5);
+        }
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx + 0.5, by + 0.5, bs - 1, bs - 1);
+      }
+    }
+    ctx.restore();
+  }
+
+  /** Obstáculo em estilo bloco (TNT vermelho/branco no chão ou Obsidiana no alto). */
+  drawVoxelObstacle(ctx, o) {
+    const { x, y, width: w, height: h } = o;
+    ctx.save();
+    if (o.type === 'sign' || o.type === 'drone') {
+      // Bloco flutuante de Obsidiana + Glowstone
+      ctx.fillStyle = '#1e1b4b';
+      ctx.strokeStyle = '#09071a';
+      ctx.lineWidth = 3;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = '#a855f7';
+      ctx.fillRect(x + 8, y + 8, w - 16, h - 16);
+      ctx.fillStyle = '#f5d0fe';
+      ctx.fillRect(x + 16, y + 16, 12, 12);
+    } else {
+      // Bloco TNT clássico
+      ctx.fillStyle = '#dc2626';
+      ctx.strokeStyle = '#450a0a';
+      ctx.lineWidth = 3;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(x + 2, y + h * 0.34, w - 4, h * 0.32);
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '900 14px "Space Grotesk", Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('TNT', x + w * 0.5, y + h * 0.51);
+    }
+    ctx.restore();
+  }
+
+  /** Moeda em estilo Esmeralda / Diamante pixelado (Dimensão Bloco). */
+  drawVoxelEmerald(ctx, c) {
+    const isSuper = (c.value || 1) > 1;
+    const s = isSuper ? 16 : 12;
+    ctx.save();
+    ctx.fillStyle = isSuper ? '#38bdf8' : '#10b981';
+    ctx.strokeStyle = '#022c22';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.lineTo(s * 0.85, 0);
+    ctx.lineTo(0, s);
+    ctx.lineTo(-s * 0.85, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = isSuper ? '#bae6fd' : '#6ee7b7';
+    ctx.fillRect(-s * 0.3, -s * 0.45, s * 0.35, s * 0.45);
+    ctx.restore();
+  }
+
   drawSky(ctx, W, H, camY, blend) {
     const { current, next, t } = blend;
     const shift = camY * 0.2;
@@ -3614,6 +3937,7 @@ class GameWorld {
     const blend = this.getBiomeBlend();
     for (const p of this.platforms) this.drawPlatform(ctx, p, blend);
     this.drawRecordFlag(ctx, W);
+    this.drawPortals(ctx);
     for (const pad of this.pads) this.drawPad(ctx, pad);
     for (const ep of this.elevatedPlatforms) this.drawElevatedPlatform(ctx, ep, blend);
     for (const r of this.ramps) this.drawRamp(ctx, r);
@@ -3936,6 +4260,10 @@ class GameWorld {
   }
 
   drawPlatform(ctx, p, blend) {
+    if (this.voxelTimer > 0) {
+      this.drawVoxelPlatform(ctx, p);
+      return;
+    }
     const x = p.x + (p.shakeOffset || 0);
     const y = this.platformTop(p);
     const w = p.width;
@@ -4585,6 +4913,11 @@ class GameWorld {
   }
 
   drawObstacle(ctx, obs) {
+    if (obs.smashed) return;
+    if (this.voxelTimer > 0) {
+      this.drawVoxelObstacle(ctx, obs);
+      return;
+    }
     ctx.save();
     if (obs.type === 'crate') {
       this.drawCrate(ctx, obs);
@@ -5671,6 +6004,10 @@ class GameWorld {
   }
 
   drawCoin(ctx, c) {
+    if (this.voxelTimer > 0) {
+      this.drawVoxelEmerald(ctx, c);
+      return;
+    }
     const r = c.size * 0.5;
     const anim = c.anim || 0;
     const spin = Math.cos(anim * 1.2);

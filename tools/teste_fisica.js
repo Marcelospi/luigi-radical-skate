@@ -1789,6 +1789,54 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
       renderErr ? String(renderErr) : 'ok');
   }
 
+  console.log('\n=== 37. Fase Bonus Dimensao Bloco (Portal, Voxel 2X e retorno seguro) ===');
+  {
+    const { world, player } = newRun();
+    world._nextCameoDist = 999999;
+    world.obstacles.length = 0;
+    player.score = 16000;
+    step(world, player, {});
+    const spawnedPortal = world.portals.length === 1;
+
+    // Aproxima o portal do jogador e atravessa
+    if (world.portals[0]) world.portals[0].x = player.x + 10;
+    step(world, player, {});
+    const enteredVoxel = world.voxelTimer > 0 && player.voxelTimer > 0;
+    const bonusPts = player.addScore(100);
+
+    // Renderiza mundo voxel, portal, TNT, esmeralda e boneco voxel sem erros
+    let voxelErr = null;
+    try {
+      const ctx = mockCtx();
+      world.obstacles.push({ type: 'crate', x: 500, y: world.groundY - 58, width: 54, height: 58, hit: false });
+      world.collectibles.push({ type: 'coin', x: 600, y: world.groundY - 80, size: 28, value: 1, collected: false });
+      world.drawBackground(ctx, 1280, 720, 0);
+      world.drawTrack(ctx, 1280, 720);
+      world.drawCollectibles(ctx);
+      player.draw(ctx);
+    } catch (e) {
+      voxelErr = e;
+    }
+
+    // Testa retorno seguro ao terminar o tempo da Dimensao Bloco
+    world.voxelTimer = 1;
+    step(world, player, {});
+    const exitedSafely = world.voxelTimer === 0 && player.voxelTimer === 0 && player.invincibleTimer >= 50;
+
+    check('Portal da Dimensao Bloco surge ao atingir pontuacao alta (15.000+ pts)',
+      spawnedPortal,
+      `portals=${world.portals.length}`);
+    check('Atravessar o portal ativa modo Voxel com pontuacao 2X',
+      enteredVoxel && bonusPts >= 200,
+      `voxelTimer=${enteredVoxel} pts=${bonusPts}`);
+    check('Mundo Bloco, TNT, Esmeralda e personagem Voxel renderizam sem excecoes',
+      voxelErr === null,
+      voxelErr ? String(voxelErr) : 'ok');
+    check('Saida da Dimensao Bloco volta a pista normal com invencibilidade segura',
+      exitedSafely,
+      `timer=${world.voxelTimer} inv=${player.invincibleTimer}`);
+  }
+
   console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
   process.exit(failures === 0 ? 0 : 1);
 })().catch((err) => {

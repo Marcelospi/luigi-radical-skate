@@ -377,6 +377,7 @@ class Game {
       shield:            document.getElementById('shield-meter'),
       magnet:            document.getElementById('magnet-meter'),
       double:            document.getElementById('double-meter'),
+      voxel:             document.getElementById('voxel-meter'),
       toastStack:        document.getElementById('toast-stack'),
       desktopTrickBar:   document.getElementById('desktop-trick-bar'),
       touchControls:     document.getElementById('touch-controls'),
@@ -668,7 +669,11 @@ class Game {
         const setupModal = document.getElementById('match-setup-modal');
         const closetModal = document.getElementById('char-closet-modal');
         const quickProfileModal = document.getElementById('quick-profile-modal');
-        if (quickProfileModal && !quickProfileModal.hidden) {
+        const showcaseModal = document.getElementById('leader-showcase-modal');
+        if (showcaseModal && !showcaseModal.hidden) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeLeaderShowcaseModal();
+        } else if (quickProfileModal && !quickProfileModal.hidden) {
           if (window.soundSystem.playUI) window.soundSystem.playUI('back');
           this.closeQuickProfileModal();
         } else if (setupModal && !setupModal.hidden) {
@@ -861,6 +866,14 @@ class Game {
       this.closeQuickProfileModal();
       this.openCreator();
     });
+    on('btn-showcase-x', () => this.closeLeaderShowcaseModal(), 'back');
+    on('btn-showcase-close', () => this.closeLeaderShowcaseModal(), 'back');
+    const showcaseOverlay = document.getElementById('leader-showcase-modal');
+    if (showcaseOverlay) {
+      showcaseOverlay.addEventListener('click', (e) => {
+        if (e.target === showcaseOverlay) this.closeLeaderShowcaseModal();
+      });
+    }
     const quickProfileOverlay = document.getElementById('quick-profile-modal');
     if (quickProfileOverlay) {
       quickProfileOverlay.addEventListener('click', (e) => {
@@ -3225,6 +3238,65 @@ class Game {
     }
   }
 
+  /** Gera uma miniatura leve (96x96) do retrato do boneco atual para exibir no Placar Global. */
+  buildCompactAvatarThumb(char) {
+    if (!char) return '';
+    try {
+      if (typeof char.portrait === 'string' && /^data:image\/(jpeg|png|webp);base64,/.test(char.portrait) && char.portrait.length <= 24000) {
+        return char.portrait;
+      }
+      const srcImg = (this.el && this.el.avatar && this.el.avatar.complete && this.el.avatar.naturalWidth > 0)
+        ? this.el.avatar
+        : null;
+      if (srcImg && typeof document !== 'undefined') {
+        const c = document.createElement('canvas');
+        c.width = 96;
+        c.height = 96;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#0b1022';
+        ctx.fillRect(0, 0, 96, 96);
+        const sw = srcImg.naturalWidth;
+        const sh = srcImg.naturalHeight;
+        const side = Math.min(sw, sh);
+        const sx = Math.floor((sw - side) * 0.5);
+        const sy = Math.floor((sh - side) * 0.5);
+        ctx.drawImage(srcImg, sx, sy, side, side, 0, 0, 96, 96);
+        const dataUrl = c.toDataURL('image/jpeg', 0.74);
+        if (dataUrl && dataUrl.length <= 24000) return dataUrl;
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  /** Monta o snapshot público dos itens comprados e troféus do perfil atual. */
+  buildCurrentProfileShowcase() {
+    const pm = window.progressionManager;
+    if (!pm || !pm.data) return null;
+    const d = pm.data;
+    const owned = d.owned || {};
+    const eq = d.equipped || {};
+    const upg = d.upgrades || {};
+    const achObj = d.achievements || {};
+    return {
+      rank: typeof pm.getRankLevel === 'function' ? pm.getRankLevel() : (d.rankLevel || 1),
+      gear: Array.isArray(owned.gear) ? owned.gear.slice(0, 16) : ['classic'],
+      trails: Array.isArray(owned.trails) ? owned.trails.slice(0, 16) : ['classic'],
+      accessories: Array.isArray(owned.accessories) ? owned.accessories.slice(0, 16) : ['none'],
+      achievements: Object.keys(achObj).filter(k => achObj[k]).slice(0, 30),
+      upgrades: {
+        magnet: Math.max(0, Math.min(4, Math.floor(Number(upg.magnet) || 0))),
+        turbo: Math.max(0, Math.min(4, Math.floor(Number(upg.turbo) || 0))),
+        fever: Math.max(0, Math.min(4, Math.floor(Number(upg.fever) || 0))),
+        coinBonus: Math.max(0, Math.min(4, Math.floor(Number(upg.coinBonus) || 0)))
+      },
+      equipped: {
+        gear: eq.gear || 'classic',
+        trail: eq.trail || 'classic',
+        accessory: eq.accessory || 'none'
+      }
+    };
+  }
+
   /** Constrói o objeto completo de pontuação da partida atual para local/online. */
   buildCurrentRunScoreEntry(nameOverride) {
     const p = this.player;
@@ -3236,6 +3308,8 @@ class Game {
     const date = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
     const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const runDist = p.sessionDistance !== undefined ? p.sessionDistance : (p.distance || 0);
+    const avatarThumb = this.buildCompactAvatarThumb(char);
+    const showcase = this.buildCurrentProfileShowcase();
 
     return {
       name,
@@ -3243,7 +3317,9 @@ class Game {
       distance: Math.max(0, Math.floor(runDist)),
       characterId: char ? char.id : 'luigi_3d',
       characterName: char ? char.name : 'Luigi 3D',
-      characterPortrait: char ? char.portrait : 'assets/portraits/portrait_luigi_3d.png',
+      characterPortrait: avatarThumb || (char ? char.portrait : 'assets/portraits/portrait_luigi_3d.png'),
+      avatarThumb,
+      showcase,
       sportId: sport.id,
       sportIcon: sport.icon,
       date,
@@ -3506,13 +3582,15 @@ class Game {
         rankClass = 'leader-third';
       }
 
-      // Resolve retrato dinamicamente pelo characterId (evita guardar base64 no localStorage)
+      // Resolve retrato: prioriza miniatura salva do boneco usado no recorde (funciona entre celulares!)
       const matchedChar = (item.characterId && window.characterManager)
         ? window.characterManager.characters.find(c => c.id === item.characterId)
         : null;
-      const avatarSrc = (matchedChar && matchedChar.portrait)
-        || (item.characterPortrait && !item.characterPortrait.startsWith('data:') ? item.characterPortrait : null)
-        || 'assets/portraits/portrait_luigi_3d.png';
+      const avatarSrc = (item.avatarThumb && item.avatarThumb.startsWith('data:image/'))
+        ? item.avatarThumb
+        : ((matchedChar && matchedChar.portrait)
+          || (item.characterPortrait && (item.characterPortrait.startsWith('data:image/') || !item.characterPortrait.startsWith('data:')) ? item.characterPortrait : null)
+          || 'assets/portraits/portrait_luigi_3d.png');
 
       const isCurrentRun = !!(this._lastSavedEntryId && item.id === this._lastSavedEntryId);
       const isOwnAcc = Boolean(myUid && item.uid && item.uid === myUid);
@@ -3523,7 +3601,7 @@ class Game {
         ? `<span>👤 ${escapeHtml(item.accountName)}</span>`
         : '';
       html += `
-        <div class="leader-item ${rankClass}${isCurrentRun ? ' is-current-run' : ''}${isOwnAcc ? ' is-own-account' : ''}">
+        <div class="leader-item leader-item--clickable ${rankClass}${isCurrentRun ? ' is-current-run' : ''}${isOwnAcc ? ' is-own-account' : ''}" data-lb-idx="${index}" role="button" tabindex="0" title="Clique para ver os itens e troféus de ${escapeHtml(item.name)}">
           <div class="leader-col-left">
             <span class="leader-rank">${rankBadge}</span>
             <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
@@ -3539,12 +3617,139 @@ class Game {
           <div class="leader-col-right">
             <span class="leader-score">${formatNumber(item.score)} <small style="font-size: 10px; opacity: 0.7;">pts</small></span>
             <span class="leader-dist">${formatNumber(item.distance)}m</span>
+            <span class="leader-inspect-hint">👁️ Ver itens</span>
           </div>
         </div>
       `;
     });
 
     container.innerHTML = html;
+    const rows = container.querySelectorAll('.leader-item--clickable');
+    rows.forEach((row) => {
+      const open = () => {
+        const idx = Number(row.dataset.lbIdx);
+        const target = list[idx];
+        if (!target) return;
+        const imgEl = row.querySelector('.leader-avatar');
+        const src = (imgEl && imgEl.getAttribute('src')) || 'assets/portraits/portrait_luigi_3d.png';
+        if (window.soundSystem && window.soundSystem.playUI) window.soundSystem.playUI('click');
+        this.openLeaderShowcaseModal(target, src, idx + 1);
+      };
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      });
+    });
+  }
+
+  openLeaderShowcaseModal(item, avatarSrc, rankPos = 1) {
+    const modal = document.getElementById('leader-showcase-modal');
+    const avatarEl = document.getElementById('showcase-avatar');
+    const nameEl = document.getElementById('showcase-player-name');
+    const subEl = document.getElementById('showcase-player-sub');
+    const statsEl = document.getElementById('showcase-stats-row');
+    const contentEl = document.getElementById('showcase-content');
+    if (!modal || !contentEl) return;
+
+    if (avatarEl) avatarEl.src = avatarSrc || 'assets/portraits/portrait_luigi_3d.png';
+    if (nameEl) {
+      const badge = item.verified ? ' ✓' : '';
+      nameEl.textContent = `#${rankPos} ${item.name}${badge}`;
+    }
+    if (subEl) {
+      const acc = item.accountName ? ` · Conta: ${item.accountName}` : '';
+      subEl.textContent = `${item.sportIcon || '🛹'} ${item.characterName || 'Skatista'}${acc}`;
+    }
+
+    const sc = item.showcase || null;
+    if (statsEl) {
+      statsEl.innerHTML = `
+        <div class="showcase-stat"><span>Pontos</span><b>${formatNumber(item.score || 0)}</b></div>
+        <div class="showcase-stat"><span>Distância</span><b>${formatNumber(item.distance || 0)}m</b></div>
+        <div class="showcase-stat"><span>Patente</span><b>⭐ Nv.${sc ? (sc.rank || 1) : '—'}</b></div>
+      `;
+    }
+
+    if (!sc) {
+      contentEl.innerHTML = `
+        <div class="showcase-empty">
+          🛹 Este recorde foi gravado antes da vitrine de itens ser ativada.<br>
+          Novos recordes já exibem automaticamente todos os itens comprados, poderes e troféus!
+        </div>
+      `;
+      modal.hidden = false;
+      return;
+    }
+
+    const catalog = window.SHOP_CATALOG || {};
+    const findItem = (cat, id) => (catalog[cat] || []).find(it => it.id === id);
+    const achCatalog = window.ACHIEVEMENTS_CATALOG || [];
+    const findAch = (id) => achCatalog.find(a => a.id === id);
+
+    // 1. Equipado no recorde
+    const eq = sc.equipped || {};
+    const eqGear = findItem('gear', eq.gear);
+    const eqTrail = findItem('trails', eq.trail);
+    const eqAcc = findItem('accessories', eq.accessory);
+    const eqChips = [
+      eqGear ? `<span class="showcase-chip showcase-chip--equipped">${eqGear.icon} ${escapeHtml(eqGear.name)}</span>` : '',
+      eqTrail ? `<span class="showcase-chip showcase-chip--equipped">${eqTrail.icon} ${escapeHtml(eqTrail.name)}</span>` : '',
+      (eqAcc && eqAcc.id !== 'none') ? `<span class="showcase-chip showcase-chip--equipped">${eqAcc.icon} ${escapeHtml(eqAcc.name)}</span>` : ''
+    ].filter(Boolean).join('');
+
+    // 2. Itens comprados na Oficina
+    const boughtChips = [];
+    for (const id of (sc.gear || [])) {
+      const it = findItem('gear', id);
+      if (it && it.price > 0) boughtChips.push(`<span class="showcase-chip">${it.icon} ${escapeHtml(it.name)}</span>`);
+    }
+    for (const id of (sc.trails || [])) {
+      const it = findItem('trails', id);
+      if (it && it.price > 0) boughtChips.push(`<span class="showcase-chip">${it.icon} ${escapeHtml(it.name)}</span>`);
+    }
+    for (const id of (sc.accessories || [])) {
+      const it = findItem('accessories', id);
+      if (it && it.price > 0) boughtChips.push(`<span class="showcase-chip">${it.icon} ${escapeHtml(it.name)}</span>`);
+    }
+    const upgLabels = { magnet: '🧲 Ímã', turbo: '🚀 Turbo+', fever: '🔥 Radical', coinBonus: '🪙 Cofre' };
+    const upg = sc.upgrades || {};
+    for (const key of Object.keys(upgLabels)) {
+      const lv = Number(upg[key]) || 0;
+      if (lv > 0) boughtChips.push(`<span class="showcase-chip">${upgLabels[key]} Nv.${lv}/4</span>`);
+    }
+
+    // 3. Troféus conquistados
+    const trophyChips = (sc.achievements || []).map((id) => {
+      const a = findAch(id);
+      return a
+        ? `<span class="showcase-chip showcase-chip--trophy">${a.icon} ${escapeHtml(a.name)}</span>`
+        : `<span class="showcase-chip showcase-chip--trophy">🏆 ${escapeHtml(id)}</span>`;
+    });
+
+    contentEl.innerHTML = `
+      <div class="showcase-section">
+        <h4>Usando no Recorde</h4>
+        <div class="showcase-chips">${eqChips || '<span class="showcase-chip">🛹 Visual Clássico</span>'}</div>
+      </div>
+      <div class="showcase-section">
+        <h4>Itens &amp; Poderes Comprados (${boughtChips.length})</h4>
+        <div class="showcase-chips">${boughtChips.length > 0 ? boughtChips.join('') : '<span class="showcase-chip">Ainda juntando moedas na Oficina</span>'}</div>
+      </div>
+      <div class="showcase-section">
+        <h4>Troféus Ganhos (${trophyChips.length})</h4>
+        <div class="showcase-chips">${trophyChips.length > 0 ? trophyChips.join('') : '<span class="showcase-chip">Nenhum troféu desbloqueado ainda</span>'}</div>
+      </div>
+    `;
+
+    modal.hidden = false;
+  }
+
+  closeLeaderShowcaseModal() {
+    const modal = document.getElementById('leader-showcase-modal');
+    if (modal) modal.hidden = true;
   }
 
   flash(kind) {
@@ -3728,6 +3933,7 @@ class Game {
     this.setMeter(this.el.shield, p.hasShield, 1);
     if (this.el.magnet) this.setMeter(this.el.magnet, (p.magnetTimer || 0) > 0, (p.magnetTimer || 0) / (p.magnetDuration || 1));
     if (this.el.double) this.setMeter(this.el.double, (p.doubleTimer || 0) > 0, (p.doubleTimer || 0) / (p.doubleDuration || 1));
+    if (this.el.voxel) this.setMeter(this.el.voxel, (p.voxelTimer || 0) > 0, (p.voxelTimer || 0) / (p.voxelDuration || 1080));
 
     if (this.el.desktopTrickBar || this.el.touchControls) {
       const inAir = !p.onGround && !p.isGrinding;

@@ -131,6 +131,7 @@
       <div id="shield-meter" class="meter meter--shield"><i></i><span>ESCUDO</span></div>
       <div id="magnet-meter" class="meter meter--magnet"><i></i><span>ÍMÃ 🧲</span></div>
       <div id="double-meter" class="meter meter--double"><i></i><span>PONTOS 2X ⭐</span></div>
+      <div id="voxel-meter" class="meter meter--voxel"><i></i><span>🧱 BLOCO 2X</span></div>
     </div>
 
     <!-- Contador de combo e grind -->
@@ -889,6 +890,29 @@
         <button id="btn-clear-leaderboard" class="btn btn-quiet btn-danger-soft" hidden>Zerar Placar Local</button>
       </div>
     </section>
+
+    <!-- Modal de Vitrine do Jogador (Placar de Líderes) -->
+    <div id="leader-showcase-modal" class="overlay-modal" role="dialog" aria-modal="true" aria-labelledby="showcase-player-name" hidden>
+      <div class="overlay-card overlay-card--showcase">
+        <div class="overlay-head">
+          <div class="showcase-head-row">
+            <img id="showcase-avatar" class="showcase-avatar" src="assets/portraits/portrait_luigi_3d.png" alt="Avatar do jogador" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
+            <div>
+              <h3 id="showcase-player-name">Skatista</h3>
+              <p id="showcase-player-sub">🛹 Skate · Luigi 3D</p>
+            </div>
+          </div>
+          <button type="button" id="btn-showcase-x" class="icon-btn icon-btn--sm" aria-label="Fechar">✕</button>
+        </div>
+
+        <div id="showcase-stats-row" class="showcase-stats-row"></div>
+        <div id="showcase-content" class="showcase-content"></div>
+
+        <div class="action-row">
+          <button type="button" id="btn-showcase-close" class="btn btn-primary btn-sm">Fechar</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Modal customizado de confirmação (evita confirm() nativo do navegador) -->
     <div id="confirm-modal" class="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>

@@ -267,6 +267,8 @@ class Player {
     this.feverGauge = 0;
     this.feverTimer = 0;
     this.feverDuration = 240;
+    this.voxelTimer = 0;
+    this.voxelDuration = 1080;
     this.hasShield = false;
     this.isGameOver = false;
     this.deathReason = '';
@@ -434,7 +436,7 @@ class Player {
     const rankMult = (window.progressionManager && typeof window.progressionManager.getScoreMultiplier === 'function')
       ? window.progressionManager.getScoreMultiplier()
       : 1;
-    const activeMult = (this.doubleTimer > 0 ? 2 : 1) * (this.feverTimer > 0 ? 2 : 1);
+    const activeMult = (this.doubleTimer > 0 ? 2 : 1) * (this.feverTimer > 0 ? 2 : 1) * (this.voxelTimer > 0 ? 2 : 1);
     return rankMult * activeMult * this.getDifficultyMult();
   }
 
@@ -2281,6 +2283,16 @@ class Player {
     const blinking = this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0;
     const baseAlpha = blinking ? 0.3 : 1;
 
+    // Fase Bônus Dimensão Bloco: personagem inteiro transformado em boneco Voxel articulado!
+    if (this.voxelTimer > 0) {
+      ctx.save();
+      ctx.globalAlpha = baseAlpha;
+      this.drawVoxelCharacter(ctx, char, centerX, baseFootY);
+      ctx.restore();
+      drawAuras(centerX, baseFootY);
+      return;
+    }
+
     // Animação 2D Cutout (Puppet Rig oficial OU Vector Rig customizável com gênero/pele/rosto grande)
     const isCustomRig = char.bodyStyle === 'custom' && !char.fullPhoto;
     const isSpriteOnly = char.bodyStyle === 'sprite' || char.fullPhoto;
@@ -3611,6 +3623,99 @@ class Player {
     ctx.beginPath();
     ctx.ellipse(cx, surfaceY + 3, rx, rx * 0.26, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  /** Renderiza o personagem inteiro em estilo Voxel / Blocos durante a Fase Bônus Dimensão Bloco. */
+  drawVoxelCharacter(ctx, char, centerX, footY) {
+    const isDuck = this.isDucking && this.onGround;
+    const h = isDuck ? 84 : 118;
+    const bob = this.onGround ? Math.sin(this.animTime * 0.25) * 2.5 : 0;
+    const pushSwing = this.isPushing ? Math.sin(this.pushPhase * Math.PI * 2) * 12 : Math.sin(this.animTime * 0.22) * 4;
+    const gearPal = (window.progressionManager && typeof window.progressionManager.getEquippedGearPalette === 'function'
+      ? window.progressionManager.getEquippedGearPalette()
+      : null) || { primary: '#22d3ee', secondary: '#0ea5e9', accent: '#f43f7e' };
+
+    let drawX = centerX;
+    let drawY = footY;
+    let totalRot = (this.pitch || 0) + (this.rotation || 0);
+    if (this.isInLoop && typeof this.getLoopBodyCenter === 'function') {
+      const lc = this.getLoopBodyCenter();
+      drawX = lc.x;
+      drawY = lc.y + h * 0.5;
+      totalRot = this.loopAngle || 0;
+    }
+
+    ctx.save();
+    ctx.translate(drawX, drawY - h * 0.5 + bob);
+    ctx.rotate(totalRot);
+    ctx.translate(0, h * 0.5);
+
+    // Equipamento Voxel (skate/bmx/patinete/patins em blocos)
+    ctx.fillStyle = gearPal.primary || '#22d3ee';
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.5;
+    ctx.fillRect(-34, -14, 68, 9);
+    ctx.strokeRect(-34, -14, 68, 9);
+    // Rodinhas quadradas pixeladas
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-24, -6, 10, 8);
+    ctx.fillRect(14, -6, 10, 8);
+    ctx.fillStyle = gearPal.accent || '#f43f7e';
+    ctx.fillRect(-22, -4, 6, 4);
+    ctx.fillRect(16, -4, 6, 4);
+
+    // Pernas quadradas voxel
+    const legH = isDuck ? 20 : 34;
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(-15, -14 - legH, 13, legH);
+    ctx.strokeRect(-15, -14 - legH, 13, legH);
+    ctx.fillStyle = '#1d4ed8';
+    ctx.fillRect(2 + pushSwing * 0.35, -14 - legH, 13, legH);
+    ctx.strokeRect(2 + pushSwing * 0.35, -14 - legH, 13, legH);
+
+    // Tronco quadrado (camisa estilo bloco)
+    const torsoH = isDuck ? 28 : 36;
+    const torsoTop = -14 - legH - torsoH;
+    ctx.fillStyle = gearPal.secondary || '#0ea5e9';
+    ctx.fillRect(-18, torsoTop, 36, torsoH);
+    ctx.strokeRect(-18, torsoTop, 36, torsoH);
+    // Detalhe xadrez pixelado no peito
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillRect(-10, torsoTop + 6, 10, 10);
+    ctx.fillRect(4, torsoTop + 16, 10, 10);
+
+    // Braço quadrado balançando
+    ctx.fillStyle = '#fde2c8';
+    ctx.fillRect(-28, torsoTop + 4 + pushSwing * 0.25, 11, 24);
+    ctx.strokeRect(-28, torsoTop + 4 + pushSwing * 0.25, 11, 24);
+    ctx.fillRect(17, torsoTop + 4 - pushSwing * 0.25, 11, 24);
+    ctx.strokeRect(17, torsoTop + 4 - pushSwing * 0.25, 11, 24);
+
+    // Cabeça quadrada Voxel (34x34)
+    const headS = 34;
+    const headY = torsoTop - headS;
+    ctx.fillStyle = '#fde2c8';
+    ctx.fillRect(-headS * 0.5, headY, headS, headS);
+    ctx.strokeRect(-headS * 0.5, headY, headS, headS);
+
+    // Cabelo / Capacete quadrado SK8
+    ctx.fillStyle = gearPal.primary || '#22d3ee';
+    ctx.fillRect(-headS * 0.5 - 2, headY - 4, headS + 4, 13);
+    ctx.strokeRect(-headS * 0.5 - 2, headY - 4, headS + 4, 13);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(-headS * 0.5 - 2, headY + 6, 8, 10);
+
+    // Olhos quadrados pixelados + sorriso
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(1, headY + 13, 6, 6);
+    ctx.fillRect(10, headY + 13, 6, 6);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(4, headY + 14, 3, 4);
+    ctx.fillRect(13, headY + 14, 3, 4);
+    ctx.fillStyle = '#7c2d12';
+    ctx.fillRect(4, headY + 24, 9, 3);
+
     ctx.restore();
   }
 

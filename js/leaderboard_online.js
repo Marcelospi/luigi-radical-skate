@@ -58,6 +58,57 @@ function sanitizeText(raw, fallback, minLen, maxLen) {
   return out.length >= minLen ? out : fallback;
 }
 
+function sanitizeAvatarThumb(raw) {
+  if (typeof raw !== 'string') return '';
+  const s = raw.trim();
+  if (s.length < 20 || s.length > 25000) return '';
+  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) return '';
+  return s;
+}
+
+function sanitizeIdList(arr, maxItems) {
+  if (!Array.isArray(arr)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of arr) {
+    const id = sanitizeText(raw, '', 1, 32);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      out.push(id);
+      if (out.length >= maxItems) break;
+    }
+  }
+  return out;
+}
+
+function sanitizeShowcase(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const clampInt = (v, min, max) => {
+    const n = Math.floor(Number(v));
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : min;
+  };
+  const upg = (raw.upgrades && typeof raw.upgrades === 'object') ? raw.upgrades : {};
+  const eq = (raw.equipped && typeof raw.equipped === 'object') ? raw.equipped : {};
+  return {
+    rank: clampInt(raw.rank, 1, 999),
+    gear: sanitizeIdList(raw.gear, 16),
+    trails: sanitizeIdList(raw.trails, 16),
+    accessories: sanitizeIdList(raw.accessories, 16),
+    achievements: sanitizeIdList(raw.achievements, 30),
+    upgrades: {
+      magnet: clampInt(upg.magnet, 0, 4),
+      turbo: clampInt(upg.turbo, 0, 4),
+      fever: clampInt(upg.fever, 0, 4),
+      coinBonus: clampInt(upg.coinBonus, 0, 4)
+    },
+    equipped: {
+      gear: sanitizeText(eq.gear, 'classic', 1, 32),
+      trail: sanitizeText(eq.trail, 'classic', 1, 32),
+      accessory: sanitizeText(eq.accessory, 'none', 1, 32)
+    }
+  };
+}
+
 class OnlineLeaderboard {
   constructor() {
     this._sdkPromise = null;
@@ -161,8 +212,8 @@ class OnlineLeaderboard {
       ? Math.max(0, Math.min(999999, Math.floor(rawDist)))
       : 0;
 
-    // Exatamente os 10 campos permitidos pelas regras do Firestore (sem base64/data:)
-    return {
+    // Campos base exigidos + opcionais validados (avatarThumb e showcase)
+    const payload = {
       name,
       score,
       distance,
@@ -174,6 +225,11 @@ class OnlineLeaderboard {
       time,
       createdAt: serverTimestampFn()
     };
+    const thumb = sanitizeAvatarThumb(entry && entry.avatarThumb);
+    if (thumb) payload.avatarThumb = thumb;
+    const showcase = sanitizeShowcase(entry && entry.showcase);
+    if (showcase) payload.showcase = showcase;
+    return payload;
   }
 
   /** Payload autenticado com UID verificado e nome da conta/família (com fallback para 10 campos). */
@@ -226,6 +282,8 @@ class OnlineLeaderboard {
       const accountName = (typeof d.accountName === 'string' && d.accountName.trim())
         ? sanitizeText(d.accountName, '', 1, 30)
         : '';
+      const avatarThumb = sanitizeAvatarThumb(d.avatarThumb);
+      const showcase = sanitizeShowcase(d.showcase);
       const item = {
         id: doc.id,
         name: sanitizeText(d.name, 'Skatista', 1, 24),
@@ -233,9 +291,11 @@ class OnlineLeaderboard {
         distance: Math.max(0, Math.floor(Number(d.distance) || 0)),
         characterId,
         characterName: sanitizeText(d.characterName, 'Luigi 3D', 1, 30),
-        characterPortrait: characterId === 'luigi_real'
+        characterPortrait: avatarThumb || (characterId === 'luigi_real'
           ? 'assets/portraits/portrait_luigi_real.png'
-          : 'assets/portraits/portrait_luigi_3d.png',
+          : 'assets/portraits/portrait_luigi_3d.png'),
+        avatarThumb,
+        showcase,
         sportId,
         sportIcon: sanitizeText(d.sportIcon, SPORT_DEFAULT_ICONS[sportId] || '🛹', 1, 8),
         date: sanitizeText(d.date, '', 0, 20),
