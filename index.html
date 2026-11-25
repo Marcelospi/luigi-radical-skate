@@ -47,7 +47,7 @@
     <!-- ================= HUD DE JOGO ================= -->
     <header id="hud">
       <div class="hud-side">
-        <div class="hud-chip hud-lives-chip" title="Vidas na corrida (começa com 3, até 5 com bônus de fase)">
+        <div class="hud-chip hud-lives-chip" title="Vidas na corrida (3 vidas; recupera 1 ao passar de fase no Fácil se estiver ferido)">
           <img id="hud-avatar" class="hud-avatar" src="assets/portraits/portrait_luigi_3d.png" alt="Avatar" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
           <span id="hud-lives" class="hud-lives" aria-label="Vidas restantes"></span>
         </div>
@@ -152,23 +152,23 @@
       <button type="button" id="desk-trick-3" class="desk-trick-btn" title="Manobra 3 (Tecla C)"><kbd>C</kbd><span id="desk-trick-3-label">GRAB</span></button>
     </div>
 
-    <!-- ================= CONTROLES DE TOQUE ================= -->
+    <!-- ================= CONTROLES DE TOQUE (ERGONOMIA GAMEPAD) ================= -->
     <div id="touch-controls">
-      <div class="touch-cluster">
+      <div class="touch-cluster touch-cluster--left" aria-label="Movimento">
+        <button type="button" id="touch-duck" class="touch-btn touch-btn--duck" aria-label="Abaixar ou queda rápida">
+          <span class="touch-glyph">▼</span><span class="touch-label">ABAIXAR</span>
+        </button>
         <button type="button" id="touch-accelerate" class="touch-btn touch-btn--speed" aria-label="Acelerar e remar">
           <span class="touch-glyph">▶▶</span><span class="touch-label">REMAR</span>
         </button>
-        <button type="button" id="touch-duck" class="touch-btn" aria-label="Abaixar ou queda rápida">
-          <span class="touch-glyph">▼</span><span class="touch-label">ABAIXAR</span>
-        </button>
+      </div>
+      <div class="touch-cluster touch-cluster--right" aria-label="Pular e manobras">
+        <button type="button" id="touch-trick-1" class="touch-btn touch-btn--trick touch-arc-1" aria-label="Manobra 1"><span class="touch-glyph">↻</span><span id="touch-trick-1-label" class="touch-label">FLIP</span></button>
+        <button type="button" id="touch-trick-2" class="touch-btn touch-btn--trick touch-arc-2" aria-label="Manobra 2"><span class="touch-glyph">🌀</span><span id="touch-trick-2-label" class="touch-label">360°</span></button>
+        <button type="button" id="touch-trick-3" class="touch-btn touch-btn--trick touch-arc-3" aria-label="Manobra 3"><span class="touch-glyph">✋</span><span id="touch-trick-3-label" class="touch-label">GRAB</span></button>
         <button type="button" id="touch-jump" class="touch-btn touch-btn--primary" aria-label="Pular">
           <span class="touch-glyph">▲</span><span class="touch-label">PULAR</span>
         </button>
-      </div>
-      <div class="touch-cluster touch-cluster--tricks">
-        <button type="button" id="touch-trick-1" class="touch-btn touch-btn--trick" aria-label="Manobra 1"><span class="touch-glyph">Z</span><span id="touch-trick-1-label" class="touch-label">FLIP</span></button>
-        <button type="button" id="touch-trick-2" class="touch-btn touch-btn--trick" aria-label="Manobra 2"><span class="touch-glyph">X</span><span id="touch-trick-2-label" class="touch-label">360°</span></button>
-        <button type="button" id="touch-trick-3" class="touch-btn touch-btn--trick" aria-label="Manobra 3"><span class="touch-glyph">C</span><span id="touch-trick-3-label" class="touch-label">GRAB</span></button>
       </div>
     </div>
 
@@ -378,7 +378,7 @@
           <div class="setup-section">
             <span class="customizer-label">Modo de Partida</span>
             <div class="pill-group pill-group--wrap" id="mode-selector" role="radiogroup" aria-label="Modo de jogo">
-              <button type="button" class="pill-opt active" data-mode="classic" aria-pressed="true" title="3 vidas iniciais (até 5 passando de fase)">🛹 Clássico</button>
+              <button type="button" class="pill-opt active" data-mode="classic" aria-pressed="true" title="3 vidas (recupera 1 ao passar de fase no Fácil se estiver ferido)">🛹 Clássico</button>
               <button type="button" class="pill-opt" data-mode="time60" aria-pressed="false" title="Faça o máximo de pontos em 60 segundos sem perder vidas">⏱️ 60s</button>
               <button type="button" class="pill-opt" data-mode="free" aria-pressed="false" title="Treine manobras e colete moedas sem perder vidas">🌟 Treino</button>
             </div>
@@ -689,8 +689,8 @@
       <div class="instructions-grid">
         <article class="instruction">
           <div class="instruction-keys"><kbd>&rarr;</kbd><kbd>D</kbd> <kbd>Espaço</kbd> <kbd>S</kbd></div>
-          <h3>Controles e Deslize no Celular</h3>
-          <p>Reme com <b>&rarr;/D</b>, pule com <b>Espaço/W/&uarr;</b> e abaixe ou caia rápido com <b>S/&darr;</b>. No celular, use os botões ou deslize o dedo na tela!</p>
+          <h3>Controles e Ergonomia no Celular</h3>
+          <p>No PC: reme com <b>&rarr;/D</b>, pule com <b>Espaço/W/&uarr;</b> e abaixe com <b>S/&darr;</b>. No celular: <b>polegar esquerdo</b> em <b>Abaixar / Remar</b> e <b>polegar direito</b> em <b>Pular + Manobras</b> (ou deslize o dedo na tela)!</p>
         </article>
 
         <article class="instruction">

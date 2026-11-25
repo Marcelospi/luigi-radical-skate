@@ -1704,14 +1704,16 @@ kbd {
 
 #touch-controls {
   position: absolute;
-  bottom: clamp(14px, 3vh, 26px);
-  left: clamp(14px, 3vw, 28px);
-  right: clamp(14px, 3vw, 28px);
+  bottom: max(clamp(12px, 2.8vh, 24px), env(safe-area-inset-bottom, 0px));
+  left: max(clamp(14px, 3vw, 28px), env(safe-area-inset-left, 0px));
+  right: max(clamp(14px, 3vw, 28px), env(safe-area-inset-right, 0px));
   z-index: 25;
   display: none;
   justify-content: space-between;
   align-items: flex-end;
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #game-wrapper[data-state="PLAYING"] #touch-controls { display: flex; }
@@ -1720,7 +1722,15 @@ kbd {
   #game-wrapper[data-state="PLAYING"] #touch-controls { display: none; }
 }
 
-.touch-cluster { display: flex; gap: 10px; align-items: flex-end; }
+.touch-cluster { display: flex; gap: 12px; align-items: flex-end; }
+.touch-cluster--left { gap: 12px; }
+.touch-cluster--right {
+  position: relative;
+  display: block;
+  width: 186px;
+  height: 170px;
+  pointer-events: none;
+}
 
 .touch-btn {
   pointer-events: auto;
@@ -1730,23 +1740,25 @@ kbd {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1px;
+  gap: 2px;
   color: var(--text);
-  background: rgba(10, 11, 26, 0.82);
-  border: 1.5px solid var(--line-strong);
-  box-shadow: var(--shadow-md);
+  background: rgba(10, 12, 28, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.36);
   touch-action: manipulation;
-  transition: transform 0.1s, background 0.1s;
+  transition: transform 0.09s ease, background 0.12s ease, opacity 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
 }
-.touch-glyph { font-size: 20px; font-weight: 800; line-height: 1; }
-.touch-label { font-size: 8px; font-weight: 800; letter-spacing: 0.1em; opacity: 0.7; }
+.touch-glyph { font-size: 19px; font-weight: 800; line-height: 1; }
+.touch-label { font-size: 8px; font-weight: 800; letter-spacing: 0.08em; opacity: 0.78; }
 
 .touch-btn:active,
 .touch-btn.is-pressed { transform: scale(0.9); background: var(--cyan); color: #04121b; border-color: var(--cyan); }
 
 .touch-btn--speed {
-  background: rgba(251, 191, 36, 0.2);
-  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.22);
+  border-color: rgba(251, 191, 36, 0.56);
 }
 .touch-btn--speed .touch-glyph { color: var(--gold); }
 .touch-btn--speed:active,
@@ -1758,22 +1770,41 @@ kbd {
 .touch-btn--speed:active .touch-glyph,
 .touch-btn--speed.is-pressed .touch-glyph { color: #1f1402; }
 
-.touch-btn--primary {
-  width: 82px; height: 82px;
-  background: linear-gradient(140deg, rgba(34, 211, 238, 0.28), rgba(139, 92, 246, 0.28));
-  border-color: rgba(34, 211, 238, 0.5);
-  box-shadow: 0 0 24px rgba(34, 211, 238, 0.32);
+.touch-cluster--right .touch-btn--primary {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 84px; height: 84px;
+  background: linear-gradient(145deg, rgba(34, 211, 238, 0.34), rgba(139, 92, 246, 0.34));
+  border-color: rgba(34, 211, 238, 0.65);
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.34), 0 8px 22px rgba(0, 0, 0, 0.36);
 }
-.touch-btn--primary .touch-glyph { font-size: 25px; }
+.touch-btn--primary .touch-glyph { font-size: 26px; }
+.touch-btn--primary .touch-label { font-size: 8.5px; opacity: 0.92; }
 
+/* Arco ergonômico de manobras ao redor do botão PULAR (estilo gamepad) */
 .touch-btn--trick {
+  position: absolute;
   width: 54px; height: 54px;
-  background: rgba(244, 63, 126, 0.24);
-  border-color: rgba(244, 63, 126, 0.42);
+  background: rgba(244, 63, 126, 0.18);
+  border-color: rgba(244, 63, 126, 0.36);
+  opacity: 0.44;
 }
-.touch-btn--trick .touch-glyph { font-size: 16px; }
+.touch-arc-1 { right: 98px; bottom: 8px; }
+.touch-arc-2 { right: 78px; bottom: 78px; }
+.touch-arc-3 { right: 12px; bottom: 98px; }
+.touch-btn--trick .touch-glyph { font-size: 15px; }
+.touch-btn--trick .touch-label { font-size: 7px; letter-spacing: 0.05em; }
+
+/* No ar: botões de manobra acendem com destaque neon */
+#touch-controls.in-air .touch-btn--trick {
+  opacity: 0.98;
+  background: rgba(244, 63, 126, 0.34);
+  border-color: rgba(244, 63, 126, 0.8);
+  box-shadow: 0 0 16px rgba(244, 63, 126, 0.38);
+}
 .touch-btn--trick:active,
-.touch-btn--trick.is-pressed { background: var(--pink); border-color: var(--pink); color: #fff; }
+.touch-btn--trick.is-pressed { background: var(--pink); border-color: var(--pink); color: #fff; opacity: 1; }
 
 /* ============================================================
    Aviso de rotação — o jogo é 16:9 e não cabe em pé no celular
@@ -1855,15 +1886,24 @@ kbd {
   .menu-row { grid-template-columns: 1fr; }
 }
 
-/* Celular deitado: pouca altura, tudo precisa encolher junto */
+/* Celular deitado: pouca altura, tudo encolhe mantendo alvos confortáveis (>= 48px) */
 @media (max-height: 460px) {
-  #touch-controls { bottom: 10px; left: 12px; right: 12px; }
-  .touch-btn { width: 50px; height: 50px; }
-  .touch-btn--primary { width: 62px; height: 62px; }
-  .touch-btn--primary .touch-glyph { font-size: 19px; }
-  .touch-btn--trick { width: 42px; height: 42px; }
-  .touch-btn--trick .touch-glyph { font-size: 12px; }
-  .touch-glyph { font-size: 15px; }
+  #touch-controls {
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+  }
+  .touch-cluster--left { gap: 10px; }
+  .touch-cluster--right { width: 158px; height: 146px; }
+  .touch-btn { width: 54px; height: 54px; }
+  .touch-cluster--right .touch-btn--primary { width: 68px; height: 68px; }
+  .touch-btn--primary .touch-glyph { font-size: 21px; }
+  .touch-btn--trick { width: 48px; height: 48px; }
+  .touch-arc-1 { right: 80px; bottom: 6px; }
+  .touch-arc-2 { right: 64px; bottom: 64px; }
+  .touch-arc-3 { right: 8px; bottom: 80px; }
+  .touch-btn--trick .touch-glyph { font-size: 13px; }
+  .touch-glyph { font-size: 16px; }
   .touch-label { font-size: 6.5px; }
 }
 

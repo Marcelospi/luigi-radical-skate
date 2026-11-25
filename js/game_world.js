@@ -298,6 +298,8 @@ class GameWorld {
     this._meteors = [];
     this._letterCounter = 0;
     this._chunksSinceLoop = 0;
+    this._lastShieldDist = -1000;
+    this._lastTurboDist = -1000;
     this._nextCameoDist = 520 + Math.random() * 160;
     this._lastCameoType = '';
 
@@ -1234,12 +1236,21 @@ class GameWorld {
       return;
     }
     const r = Math.random();
-    const shieldCutoff = player.difficulty === 'hard' ? 0.31 : 0.38;
+    const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
+    const shieldCooldown = player.difficulty === 'hard' ? 1600 : 1100;
+    const shieldCutoff = player.difficulty === 'hard' ? 0.27 : 0.29;
+    const hasActiveShieldPickup = this.collectibles.some(c => c.type === 'shield' && !c.collected);
+    const canSpawnShield = runDist >= 450
+      && !player.hasShield
+      && !hasActiveShieldPickup
+      && (runDist - (this._lastShieldDist ?? -1000)) >= shieldCooldown;
+
     if (r < 0.14) {
       this.collectibles.push({ type: 'magnet', x, y, size: 38, collected: false });
     } else if (r < 0.24) {
       this.collectibles.push({ type: 'double', x, y, size: 38, collected: false });
-    } else if (r < shieldCutoff && !player.hasShield) {
+    } else if (r < shieldCutoff && canSpawnShield) {
+      this._lastShieldDist = runDist;
       this.collectibles.push({ type: 'shield', x, y, size: 38, collected: false });
     }
   }
@@ -1548,7 +1559,9 @@ class GameWorld {
     this.spawnJumpArc(lipX + 24, this.groundY - 142, 4, 300, player.speed);
 
     const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
-    if (runDist >= 500 && Math.random() < 0.40) {
+    const canSpawnTurbo = runDist >= 500 && (runDist - (this._lastTurboDist ?? -1000)) >= 550;
+    if (canSpawnTurbo && Math.random() < 0.24) {
+      this._lastTurboDist = runDist;
       this.collectibles.push({
         type: 'turbo', x: lipX + 215, y: this.groundY - 238, size: 40, collected: false
       });

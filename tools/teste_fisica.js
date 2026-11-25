@@ -86,7 +86,7 @@ function check(name, cond, detail = '') {
 }
 
 const VIDAS_INICIAIS = 3;
-const MAX_VIDAS = 5;
+const MAX_VIDAS = 3;
 
 function newRun() {
   const world = new sandbox.GameWorld();
@@ -107,7 +107,7 @@ console.log('\n=== 1. O jogador nasce apoiado no asfalto ===');
   check('pes exatamente sobre groundY', player.bottom === world.groundY,
     `bottom=${player.bottom} groundY=${world.groundY}`);
   check('onGround inicia verdadeiro', player.onGround === true);
-  check('inicia com 3 vidas e teto de 5', player.lives === VIDAS_INICIAIS && player.maxLives === MAX_VIDAS,
+  check('inicia com 3 vidas e teto de 3', player.lives === VIDAS_INICIAIS && player.maxLives === MAX_VIDAS,
     `vidas=${player.lives}/${player.maxLives}`);
 }
 
@@ -448,12 +448,24 @@ console.log('\n=== 14. Progressao de fases da a recompensa certa ===');
   check('vidas ficam dentro do intervalo valido',
     player.lives >= 0 && player.lives <= player.maxLives && player.maxLives === MAX_VIDAS,
     `vidas=${player.lives}/${player.maxLives}`);
-  check('virada de fase sobe 3 -> 4 -> 5 e respeita teto 5',
+  check('virada de fase respeita teto 3 sem empilhar vidas extras',
     viradas.length === 3 &&
-    viradas[0].antes === 3 && viradas[0].depois === 4 &&
-    viradas[1].antes === 4 && viradas[1].depois === 5 &&
-    viradas[2].antes === 5 && viradas[2].depois === 5,
+    viradas.every(v => v.antes === 3 && v.depois === 3),
     viradas.map(v => `${v.antes}->${v.depois}`).join(', '));
+
+  // Testa recuperacao quando ferido: Facil recupera 2->3; Dificil mantem 2->2
+  const easyHurt = newRun();
+  easyHurt.player.lives = 2;
+  easyHurt.player.distance = 610;
+  easyHurt.player.checkStageProgression();
+  const hardHurt = newRun();
+  hardHurt.player.reset(hardHurt.world, { gameMode: 'classic', difficulty: 'hard' });
+  hardHurt.player.lives = 2;
+  hardHurt.player.distance = 610;
+  hardHurt.player.checkStageProgression();
+  check('Facil recupera 1 vida ao passar de fase se ferido (2 -> 3) e Dificil nao recupera (2 -> 2)',
+    easyHurt.player.lives === 3 && hardHurt.player.lives === 2,
+    `easy=${easyHurt.player.lives}, hard=${hardHurt.player.lives}`);
 }
 
 // ============================================================
@@ -471,6 +483,9 @@ console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
     player.onGround = false;
     player.isOnRamp = false;
     player.isGrinding = false;
+    player.isInLoop = false;
+    player.currentLoop = null;
+    player.hasShield = false;
     player.isGameOver = false;
     player.lives = VIDAS_INICIAIS;
     // Evita coincidir o exato frame de virada de fase (+1 vida) no passo da queda proposital

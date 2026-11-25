@@ -378,6 +378,7 @@ class Game {
       double:            document.getElementById('double-meter'),
       toastStack:        document.getElementById('toast-stack'),
       desktopTrickBar:   document.getElementById('desktop-trick-bar'),
+      touchControls:     document.getElementById('touch-controls'),
       flash:             document.getElementById('screen-flash'),
       runHint:           document.getElementById('run-hint'),
       registerBox:       document.getElementById('gameover-register-box'),
@@ -3526,9 +3527,9 @@ class Game {
       else this.wrapper.dataset.speedFx = speedFx;
     }
 
-    // Vidas (3 iniciais, até 5 com bônus de fase — exibe 3 acesos + 2 espaços extras; ∞ em Treino Livre/60s)
+    // Vidas (3 vidas no modo Clássico; recupera 1 ao passar de fase no Fácil se ferido; ∞ em Treino Livre/60s)
     const lives = Math.max(0, p.lives);
-    const maxLives = p.maxLives || 5;
+    const maxLives = p.maxLives || 3;
     const sportInfo = this.getSportInfo(this.selectedSport);
     const lifeIcon = sportInfo.icon || '🛹';
     const isNoLifeLoss = p.gameMode === 'free' || p.gameMode === 'time60';
@@ -3656,11 +3657,12 @@ class Game {
     if (this.el.magnet) this.setMeter(this.el.magnet, (p.magnetTimer || 0) > 0, (p.magnetTimer || 0) / (p.magnetDuration || 1));
     if (this.el.double) this.setMeter(this.el.double, (p.doubleTimer || 0) > 0, (p.doubleTimer || 0) / (p.doubleDuration || 1));
 
-    if (this.el.desktopTrickBar) {
+    if (this.el.desktopTrickBar || this.el.touchControls) {
       const inAir = !p.onGround && !p.isGrinding;
       if (this.hudCache.deskInAir !== inAir) {
         this.hudCache.deskInAir = inAir;
-        this.el.desktopTrickBar.classList.toggle('in-air', inAir);
+        if (this.el.desktopTrickBar) this.el.desktopTrickBar.classList.toggle('in-air', inAir);
+        if (this.el.touchControls) this.el.touchControls.classList.toggle('in-air', inAir);
       }
     }
   }
@@ -3726,7 +3728,7 @@ class Game {
     }, 2200);
   }
 
-  onStageUnlocked(stage, tourLap = 1) {
+  onStageUnlocked(stage, tourLap = 1, gainedLife = false) {
     const banner = this.el.stageBanner;
     if (!banner || !stage) return;
 
@@ -3741,9 +3743,9 @@ class Game {
     if (this.el.stageBannerReward) {
       const sportIcon = this.getSportInfo(this.selectedSport).icon || '🛹';
       const isNoLifeLoss = this.player.gameMode === 'free' || this.player.gameMode === 'time60';
-      this.el.stageBannerReward.textContent = isNoLifeLoss
-        ? '+1.000 pts'
-        : `${sportIcon} +1 vida · +1.000 pts`;
+      this.el.stageBannerReward.textContent = (!isNoLifeLoss && gainedLife)
+        ? `${sportIcon} +1 vida · +1.000 pts`
+        : '+1.000 pts';
     }
     banner.classList.add('active');
 

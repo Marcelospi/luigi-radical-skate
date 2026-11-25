@@ -242,9 +242,9 @@ class Player {
     this.comboLinkTimer = 0;
     this.linkedComboMult = 1;
 
-    // Progresso & Fases (inicia com 3 vidas e sobe até o teto de 5 ao vencer fases)
+    // Progresso & Fases (inicia com 3 vidas, teto de 3 — recupera 1 ao passar de fase no Fácil se estiver ferido)
     this.lives = 3;
-    this.maxLives = 5;
+    this.maxLives = 3;
     const startStage = Math.max(0, Math.min(STAGES.length - 1, Math.floor(opts.startStageIndex || 0)));
     this.startedStageIndex = startStage;
     this.currentStageIndex = startStage;
@@ -571,8 +571,7 @@ class Player {
       const hardAbyss = this.difficulty === 'hard' && !freeRescue;
       if (!hardAbyss && (this.lives > 1 || freeRescue)) {
         if (!freeRescue) this.lives--;
-        this.invincibleTimer = 140;
-        this.hasShield = true;
+        this.invincibleTimer = 105;
         this.vy = 0;
         this.isGrinding = false;
         this.grindIntensity = 0;
@@ -667,9 +666,12 @@ class Player {
       this.tourLap = tl.tourLap;
       const stage = STAGES[this.currentStageIndex];
 
-      // Recompensa de fase: +1 vida (até o teto de 5) e +1000 pontos!
+      // Recompensa de fase: +1000 pontos e, no Fácil, recupera +1 vida apenas se estiver ferido (teto 3)
       const livesBefore = this.lives;
-      this.lives = Math.min(this.maxLives || 5, this.lives + 1);
+      const canRecoverLife = this.difficulty !== 'hard' && this.gameMode === 'classic';
+      if (canRecoverLife && this.lives < (this.maxLives || 3)) {
+        this.lives = Math.min(this.maxLives || 3, this.lives + 1);
+      }
       const gainedLife = this.lives > livesBefore;
       this.score += 1000;
 
@@ -691,7 +693,7 @@ class Player {
       }
 
       if (window.game && window.game.onStageUnlocked) {
-        window.game.onStageUnlocked(stage, this.tourLap);
+        window.game.onStageUnlocked(stage, this.tourLap, gainedLife);
       }
     }
   }
