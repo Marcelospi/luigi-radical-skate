@@ -156,17 +156,20 @@ class Input {
 class LeaderboardManager {
   constructor() {
     this.STORAGE_KEY = 'luigi_skate_leaderboard';
-    this.CLEANED_FLAG = 'luigi_skate_cleaned_anon_scores_v3';
+    this.CLEANED_FLAG = 'luigi_skate_reset_scores_v4';
     this.cleanLegacyScores();
     this.stripHeavyPortraits();
   }
 
-  // Zera as pontuações salvas hoje que não tinham nome
+  // Zera o placar local e recordes antigos acumulados para início limpo por perfil
   cleanLegacyScores() {
     try {
       if (!localStorage.getItem(this.CLEANED_FLAG)) {
         localStorage.removeItem('luigi_skate_high_score');
         localStorage.setItem(this.STORAGE_KEY, JSON.stringify([]));
+        if (window.progressionManager && typeof window.progressionManager.resetAllHighScores === 'function') {
+          window.progressionManager.resetAllHighScores();
+        }
         localStorage.setItem(this.CLEANED_FLAG, 'true');
       }
     } catch (_) {}

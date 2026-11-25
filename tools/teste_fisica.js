@@ -476,7 +476,7 @@ console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
     // Evita coincidir o exato frame de virada de fase (+1 vida) no passo da queda proposital
     const tl = sandbox.getStageTimeline(player.distance + 40);
     player.currentStageIndex = tl.stageIndex;
-    player._lastMilestoneKey = `${tl.tourLap}:${tl.stageIndex}`;
+    player._stageMilestone = tl.milestoneCount;
     step(world, player, {});
     apoiadoNoResgate.push(player.onGround);   // o pouso importa neste instante
     vidasAposResgate.push(player.lives);      // mede custo do resgate imediatamente

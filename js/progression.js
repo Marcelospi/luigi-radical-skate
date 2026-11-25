@@ -636,6 +636,22 @@ class ProgressionManager {
     return isNew;
   }
 
+  /** Zera os recordes de todos os perfis preservando moedas, fases e itens comprados. */
+  resetAllHighScores() {
+    for (const pid of Object.keys(this.profiles || {})) {
+      if (this.profiles[pid]) {
+        this.profiles[pid].highScore = 0;
+        this.profiles[pid].highScoreTime60 = 0;
+        this.profiles[pid].clientUpdatedAt = Date.now();
+      }
+    }
+    if (this.data) {
+      this.data.highScore = 0;
+      this.data.highScoreTime60 = 0;
+    }
+    this._touchAndSave('score_reset', this.activeProfileId);
+  }
+
   getPreferredSport() {
     const sp = this.data && this.data.preferredSport;
     return VALID_SPORTS_LIST.includes(sp) ? sp : 'skate';
