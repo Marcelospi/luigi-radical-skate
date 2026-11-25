@@ -453,7 +453,7 @@ console.log('\n=== 14. Progressao de fases da a recompensa certa ===');
     viradas.every(v => v.antes === 3 && v.depois === 3),
     viradas.map(v => `${v.antes}->${v.depois}`).join(', '));
 
-  // Testa recuperacao quando ferido: Facil recupera 2->3; Dificil mantem 2->2
+  // Testa que virada de fase nao recarrega vidas automaticamente (cada uma das 3 vidas conta!)
   const easyHurt = newRun();
   easyHurt.player.lives = 2;
   easyHurt.player.distance = 610;
@@ -463,8 +463,8 @@ console.log('\n=== 14. Progressao de fases da a recompensa certa ===');
   hardHurt.player.lives = 2;
   hardHurt.player.distance = 610;
   hardHurt.player.checkStageProgression();
-  check('Facil recupera 1 vida ao passar de fase se ferido (2 -> 3) e Dificil nao recupera (2 -> 2)',
-    easyHurt.player.lives === 3 && hardHurt.player.lives === 2,
+  check('Passar de fase da pontos mas nao recarrega vidas gratis (2 -> 2 no Facil e Dificil)',
+    easyHurt.player.lives === 2 && hardHurt.player.lives === 2,
     `easy=${easyHurt.player.lives}, hard=${hardHurt.player.lives}`);
 }
 
@@ -1570,6 +1570,18 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
     check('Cameo cachorro permite esquivar pulando e recompensa sem tirar vida',
       dogCameo.outcome === 'dodged' && dogRun.player.lives === VIDAS_INICIAIS,
       `outcome=${dogCameo.outcome} vidas=${dogRun.player.lives}`);
+
+    const sprintRun = newRun();
+    sprintRun.world._nextCameoDist = 999999;
+    sprintRun.world.obstacles.length = 0;
+    const guardCameo = sprintRun.world.spawnCameo('police_chase', sprintRun.player);
+    for (let i = 0; i < 80; i++) {
+      step(sprintRun.world, sprintRun.player, { ArrowRight: true });
+      if (guardCameo.outcome === 'dodged') break;
+    }
+    check('Cameo guarda/cachorro pode ser despistado acelerando (REMAR / ArrowRight)',
+      guardCameo.outcome === 'dodged' && guardCameo.timer < 80 && sprintRun.player.lives === VIDAS_INICIAIS,
+      `outcome=${guardCameo.outcome} timer=${guardCameo.timer} vidas=${sprintRun.player.lives}`);
 
     const ufoRun = newRun();
     ufoRun.world._nextCameoDist = 999999;

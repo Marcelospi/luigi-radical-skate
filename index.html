@@ -47,7 +47,7 @@
     <!-- ================= HUD DE JOGO ================= -->
     <header id="hud">
       <div class="hud-side">
-        <div class="hud-chip hud-lives-chip" title="Vidas na corrida (3 vidas; recupera 1 ao passar de fase no Fácil se estiver ferido)">
+        <div class="hud-chip hud-lives-chip" title="3 vidas por corrida — cada erro conta!">
           <img id="hud-avatar" class="hud-avatar" src="assets/portraits/portrait_luigi_3d.png" alt="Avatar" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
           <span id="hud-lives" class="hud-lives" aria-label="Vidas restantes"></span>
         </div>
@@ -378,7 +378,7 @@
           <div class="setup-section">
             <span class="customizer-label">Modo de Partida</span>
             <div class="pill-group pill-group--wrap" id="mode-selector" role="radiogroup" aria-label="Modo de jogo">
-              <button type="button" class="pill-opt active" data-mode="classic" aria-pressed="true" title="3 vidas (recupera 1 ao passar de fase no Fácil se estiver ferido)">🛹 Clássico</button>
+              <button type="button" class="pill-opt active" data-mode="classic" aria-pressed="true" title="3 vidas reais por corrida — cada erro conta!">🛹 Clássico</button>
               <button type="button" class="pill-opt" data-mode="time60" aria-pressed="false" title="Faça o máximo de pontos em 60 segundos sem perder vidas">⏱️ 60s</button>
               <button type="button" class="pill-opt" data-mode="free" aria-pressed="false" title="Treine manobras e colete moedas sem perder vidas">🌟 Treino</button>
             </div>
@@ -749,6 +749,7 @@
         <div class="setting-actions-row">
           <button type="button" id="btn-settings-fullscreen" class="btn btn-ghost btn-sm">⛶ Ativar Tela Cheia (F)</button>
           <button type="button" id="btn-how-to-play" class="btn btn-ghost btn-sm">📖 Como Jogar e Comandos</button>
+          <button type="button" id="btn-force-update" class="btn btn-ghost btn-sm">🔄 Atualizar App</button>
         </div>
       </div>
 

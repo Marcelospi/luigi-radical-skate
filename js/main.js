@@ -460,7 +460,45 @@ class Game {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
     const okProto = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
     if (!okProto) return;
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js')
+      .then((reg) => {
+        this._swReg = reg;
+        // Verifica atualizações sempre que o app volta para primeiro plano
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && reg && reg.update) reg.update().catch(() => {});
+        });
+      })
+      .catch(() => {});
+    // Recarrega automaticamente quando uma versão nova do app assume (fora de uma corrida ativa)
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading) return;
+      if (this.state === 'PLAYING' || this.state === 'RESUMING') {
+        this._pendingAppReload = true;
+        return;
+      }
+      reloading = true;
+      window.location.reload();
+    });
+  }
+
+  async forceAppUpdate() {
+    const btn = document.getElementById('btn-force-update');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '🔄 Atualizando…';
+    }
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
+      }
+      if (typeof caches !== 'undefined' && caches.keys) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k).catch(() => {})));
+      }
+    } catch (_) {}
+    window.location.reload();
   }
 
   unlockAudioAndMenuMusic() {
@@ -842,6 +880,7 @@ class Game {
     on('btn-pause-finish-free', () => this.finishFreeRun(), 'click', { blur: true });
     on('btn-pause-settings', () => this.openSettings('PAUSED'));
     on('btn-settings-fullscreen', () => this.toggleFullscreen());
+    on('btn-force-update', () => this.forceAppUpdate());
     on('btn-settings-back', () => this.closeSettings(), 'back');
     on('btn-clear-leaderboard', () => this.clearLeaderboard(), 'back');
     on('btn-select-and-play', () => this.startPlay());

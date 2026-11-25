@@ -265,7 +265,7 @@ class Player {
     this.doubleDuration = 1;
     this.feverGauge = 0;
     this.feverTimer = 0;
-    this.feverDuration = 360;
+    this.feverDuration = 240;
     this.hasShield = false;
     this.isGameOver = false;
     this.deathReason = '';
@@ -571,7 +571,7 @@ class Player {
       const hardAbyss = this.difficulty === 'hard' && !freeRescue;
       if (!hardAbyss && (this.lives > 1 || freeRescue)) {
         if (!freeRescue) this.lives--;
-        this.invincibleTimer = 105;
+        this.invincibleTimer = 75;
         this.vy = 0;
         this.isGrinding = false;
         this.grindIntensity = 0;
@@ -666,13 +666,8 @@ class Player {
       this.tourLap = tl.tourLap;
       const stage = STAGES[this.currentStageIndex];
 
-      // Recompensa de fase: +1000 pontos e, no Fácil, recupera +1 vida apenas se estiver ferido (teto 3)
-      const livesBefore = this.lives;
-      const canRecoverLife = this.difficulty !== 'hard' && this.gameMode === 'classic';
-      if (canRecoverLife && this.lives < (this.maxLives || 3)) {
-        this.lives = Math.min(this.maxLives || 3, this.lives + 1);
-      }
-      const gainedLife = this.lives > livesBefore;
+      // Recompensa de fase: +1000 pontos (sem recarga automática de vidas — cada uma das 3 vidas conta!)
+      const gainedLife = false;
       this.score += 1000;
 
       if (window.progressionManager && window.progressionManager.unlockStage) {
@@ -1901,7 +1896,7 @@ class Player {
 
     if (this.hasShield && !instantDeath) {
       this.hasShield = false;
-      this.invincibleTimer = 70;
+      this.invincibleTimer = 50;
       this.emitEvent('damage', { intensity: 0.5 });
       if (window.soundSystem && window.soundSystem.playHit) window.soundSystem.playHit();
       if (window.particleSystem && window.particleSystem.emitSparks) {
@@ -1920,7 +1915,7 @@ class Player {
     if (!noLifeLoss) {
       this.lives -= instantDeath ? this.lives : 1;
     }
-    this.invincibleTimer = this.difficulty === 'hard' ? 58 : 78;
+    this.invincibleTimer = this.difficulty === 'hard' ? 36 : 48;
     this.deathReason = reason;
     this.comboMultiplier = 1;
     this.comboPoints = 0;

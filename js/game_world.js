@@ -501,21 +501,36 @@ class GameWorld {
       if (c.type === 'dog_chase' || c.type === 'police_chase') {
         const isDog = c.type === 'dog_chase';
         const restOffset = isDog ? 66 : 78;
-        if (player.isGameOver || player.isInLoop) {
+        c.escapeProgress = c.escapeProgress || 0;
+        if (player.isGameOver || player.isInLoop || c.outcome === 'dodged') {
           c.phase = 'leave';
-          c.x -= Math.max(5, speed * 0.8);
-        } else if (c.timer < 110) {
-          c.phase = 'chase';
-          c.x += ((player.x - restOffset) - c.x) * 0.08;
+          c.y = isDog ? this.groundY - 40 : this.groundY - 64;
+          c.x -= Math.max(5.5, speed * 0.85);
         } else if (c.timer < 158) {
-          c.phase = 'warn';
-          c.x += ((player.x - restOffset + 6) - c.x) * 0.14;
-          // Polícia se impressiona e desiste se o skatista mandar manobra ou grind!
-          if (!isDog && !c.resolved && (player.trickState || player.isGrinding)) {
+          c.phase = c.timer < 100 ? 'chase' : 'warn';
+          if (isFast) {
+            // Segurar REMAR (▶▶ / → / D) acelera e faz o perseguidor ficar visivelmente para trás!
+            c.escapeProgress += 1;
+            const pullBack = restOffset + Math.min(130, c.escapeProgress * 3.4);
+            c.x += ((player.x - pullBack) - c.x) * 0.14;
+            if (!c.resolved && c.escapeProgress >= 36) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              c.phase = 'leave';
+              c.barkText = isDog ? 'CANSEI!' : 'RÁPIDO DEMAIS!';
+              this._awardCameoDodge(player, isDog ? 'FUGIU DO CÃO!' : 'DESPISTOU NA CORRIDA!', isDog ? 320 : 380, pxCenter, player.y - 64, 2, 18);
+            }
+          } else {
+            c.escapeProgress = Math.max(0, c.escapeProgress - 0.5);
+            const targetX = c.phase === 'warn' ? (player.x - restOffset + 6) : (player.x - restOffset);
+            c.x += (targetX - c.x) * (c.phase === 'warn' ? 0.14 : 0.08);
+          }
+          // Polícia também se impressiona se o skatista mandar manobra ou grind!
+          if (!isDog && !c.resolved && c.phase === 'warn' && (player.trickState || player.isGrinding)) {
             c.resolved = true;
             c.outcome = 'dodged';
+            c.phase = 'leave';
             c.barkText = 'QUE MANOBRA!';
-            c.timer = 185;
             this._awardCameoDodge(player, 'FUGA RADICAL!', 400, pxCenter, player.y - 64, 2, 20);
           }
         } else if (c.timer < 184) {
@@ -1038,7 +1053,7 @@ class GameWorld {
       const bonus = (window.progressionManager && window.progressionManager.getUpgradeBonus)
         ? window.progressionManager.getUpgradeBonus('turbo')
         : 0;
-      const dur = 320 + bonus;
+      const dur = 240 + bonus;
       player.turboTimer = Math.max(player.turboTimer || 0, dur);
       player.turboDuration = Math.max(player.turboDuration || 1, dur);
       if (player.addScore) player.addScore(200);
@@ -1237,10 +1252,10 @@ class GameWorld {
     }
     const r = Math.random();
     const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
-    const shieldCooldown = player.difficulty === 'hard' ? 1600 : 1100;
-    const shieldCutoff = player.difficulty === 'hard' ? 0.27 : 0.29;
+    const shieldCooldown = player.difficulty === 'hard' ? 2400 : 1800;
+    const shieldCutoff = player.difficulty === 'hard' ? 0.26 : 0.275;
     const hasActiveShieldPickup = this.collectibles.some(c => c.type === 'shield' && !c.collected);
-    const canSpawnShield = runDist >= 450
+    const canSpawnShield = runDist >= 800
       && !player.hasShield
       && !hasActiveShieldPickup
       && (runDist - (this._lastShieldDist ?? -1000)) >= shieldCooldown;
@@ -4585,7 +4600,7 @@ class GameWorld {
         ctx.arc(cx + 21, cy - 12, 2.4, 0, Math.PI * 2);
         ctx.fill();
 
-        const tag = c.phase === 'warn' ? '! CÃO! PULE OU REME !' : (c.outcome === 'dodged' ? 'GRRR!' : c.barkText);
+        const tag = c.phase === 'warn' ? '! CÃO! REME ▶▶ OU PULE !' : (c.outcome === 'dodged' ? (c.barkText || 'GRRR!') : c.barkText);
         this._drawCameoTag(ctx, cx, c.y - 12, tag, c.phase === 'warn' ? '#f43f7e' : '#fbbf24');
 
       } else if (c.type === 'police_chase') {
@@ -4637,7 +4652,7 @@ class GameWorld {
         ctx.fillStyle = '#0f172a';
         ctx.fillRect(cx + 4, cy - 26, 12, 3);
 
-        const tag = c.phase === 'warn' ? '! GUARDA! MANOBRE OU PULE !' : (c.barkText || 'PRIII!');
+        const tag = c.phase === 'warn' ? '! GUARDA! REME ▶▶ OU PULE !' : (c.barkText || 'PRIII!');
         this._drawCameoTag(ctx, cx, c.y - 14, tag, c.phase === 'warn' ? '#38bdf8' : '#f43f7e');
 
       } else if (c.type === 'ufo_beam') {
