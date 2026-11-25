@@ -1736,6 +1736,57 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
       `high=${pmMulti.getHighScore('classic')} unlocked=${pmMulti.isOwned('characters', 'leo_cosmic')}`);
   }
 
+  console.log('\n=== 36. Bandeirinha Rival, Super Moeda na Rota Alta, Curva de Fase e Alerta de Borda ===');
+  {
+    const { world, player } = newRun();
+    world.reset({ recordDistance: 300, rivalDistance: 450, rivalName: 'Marcelo' });
+    player.reset(world);
+    const score0 = player.score;
+    player.distance = 455;
+    world.updateRecordFlag(player);
+
+    const coinsBefore = player.coins;
+    world.collect(player, { type: 'coin', x: player.x, y: player.y, size: 36, value: 5 });
+    const superCoinGain = player.coins - coinsBefore;
+
+    // Curva de adrenalina: Fase 5 tem teto de cruzeiro maior que Fase 1 apos aquecimento
+    const p1 = newRun();
+    p1.player.sessionDistance = 600;
+    p1.player.currentStageIndex = 0;
+    p1.player.speed = 20;
+    for (let i = 0; i < 200; i++) p1.player.updateSpeed({});
+    const p5 = newRun();
+    p5.player.sessionDistance = 600;
+    p5.player.currentStageIndex = 4;
+    p5.player.speed = 20;
+    for (let i = 0; i < 200; i++) p5.player.updateSpeed({});
+
+    // Alerta de borda direita e bandeirinha renderizam sem erros
+    let renderErr = null;
+    try {
+      const ctx = mockCtx();
+      world.playerDistance = 445;
+      world.obstacles.push({ type: 'barrel', x: 1320, y: world.groundY - 52, width: 50, height: 52, hit: false });
+      world.drawRecordFlag(ctx, 1280);
+      world.drawIncomingDangerHints(ctx, 1280);
+    } catch (e) {
+      renderErr = e;
+    }
+
+    check('Bandeirinha de Rival detecta ultrapassagem e concede bonus',
+      world.rivalPassed === true && player.score > score0 + 400,
+      `rivalPassed=${world.rivalPassed} score+${player.score - score0}`);
+    check('Super Moeda da Rota Alta concede 5 moedas',
+      superCoinGain === 5,
+      `gain=${superCoinGain}`);
+    check('Curva de adrenalina eleva velocidade de cruzeiro nas fases avancadas',
+      p5.player.speed > p1.player.speed + 1.0,
+      `F1=${p1.player.speed.toFixed(2)} F5=${p5.player.speed.toFixed(2)}`);
+    check('Bandeirinha Rival e alerta de borda renderizam sem excecoes',
+      renderErr === null,
+      renderErr ? String(renderErr) : 'ok');
+  }
+
   console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
   process.exit(failures === 0 ? 0 : 1);
 })().catch((err) => {

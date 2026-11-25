@@ -719,21 +719,23 @@ class Player {
     const wantsBrake = keys ? (Player.held(keys, 'ArrowLeft') || Player.held(keys, 'KeyA')) : false;
     this.isBraking = wantsBrake && !this.isAccelerating && this.turboTimer <= 0 && this.feverTimer <= 0;
 
-    // Nos primeiros 500m a pista aquece aos poucos para quem está começando pegar o ritmo
+    // Nos primeiros 500m a pista aquece aos poucos; depois cada fase/Volta Mundial eleva a adrenalina!
     const warmupRatio = Math.max(0, Math.min(1, (this.sessionDistance || 0) / 500));
     const warmupScale = 0.55 + 0.45 * warmupRatio;
+    const stagePaceBonus = Math.min(2.6, (this.currentStageIndex || 0) * 0.35 + Math.max(0, (this.tourLap || 1) - 1) * 0.75) * warmupRatio;
+    const effectiveMaxSpeed = this.maxSpeed + stagePaceBonus;
 
     if (this.turboTimer > 0) {
       this.turboTimer--;
-      this.speed = this.maxSpeed * PHYS.TURBO_FACTOR;
+      this.speed = effectiveMaxSpeed * PHYS.TURBO_FACTOR;
       this.isPushing = false;
       this.pushPhase = 0;
       if (window.particleSystem && window.particleSystem.emitTurboTrail) {
         window.particleSystem.emitTurboTrail(this.x + 10, this.y + this.getCurrentHeight() * 0.55);
       }
     } else if (this.feverTimer > 0) {
-      const feverFloor = this.maxSpeed * 1.24;
-      const fastMax = this.maxSpeed * 1.35;
+      const feverFloor = effectiveMaxSpeed * 1.24;
+      const fastMax = effectiveMaxSpeed * 1.35;
       if (this.isAccelerating) {
         const accelMult = (this.sport && this.sport.accelMult) || 1;
         this.speed = Math.min(fastMax, Math.max(feverFloor, this.speed + 0.08 * accelMult));
@@ -747,7 +749,7 @@ class Player {
       }
     } else if (this.isAccelerating) {
       // Remada/impulso gradual: teto controlado no aquecimento e aceleração total após 500m
-      const fullFastMax = this.maxSpeed * 1.35;
+      const fullFastMax = effectiveMaxSpeed * 1.35;
       const fastMax = this.baseSpeed + (fullFastMax - this.baseSpeed) * (0.42 + 0.58 * warmupRatio);
       const accelMult = (this.sport && this.sport.accelMult) || 1;
       const pushingGround = this.onGround && !this.isGrinding && !this.isOnRamp && !this.isDucking;
@@ -799,7 +801,7 @@ class Player {
       this.pushPhase = 0;
       const accelMult = (this.sport && this.sport.accelMult) || 1;
       const diffAccel = this.difficulty === 'hard' ? 1.4 : 1.0;
-      const hardMax = this.maxSpeed + (this.difficulty === 'hard' ? 0.9 : 0);
+      const hardMax = effectiveMaxSpeed + (this.difficulty === 'hard' ? 0.9 : 0);
       // Se estava acima da velocidade normal após soltar a seta, desacelera suavemente
       if (this.speed > hardMax) {
         this.speed = Math.max(hardMax, this.speed - 0.06);
@@ -1602,6 +1604,7 @@ class Player {
     this.notifyProgress('loop', 1);
     this.emitEvent('loop_complete', { intensity: 1.4, y: this.bottom });
 
+    if (window.game && window.game.triggerHitstop) window.game.triggerHitstop(40);
     if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
     if (window.particleSystem) {
       if (window.particleSystem.emitShockwave) {

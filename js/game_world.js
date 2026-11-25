@@ -305,6 +305,9 @@ class GameWorld {
 
     this.recordDistance = Math.max(0, Math.floor(opts.recordDistance || 0));
     this.recordPassed = false;
+    this.rivalDistance = Math.max(0, Math.floor(opts.rivalDistance || 0));
+    this.rivalName = String(opts.rivalName || '').trim().slice(0, 18);
+    this.rivalPassed = false;
 
     if (!this.layers && typeof document !== 'undefined') {
       this.buildLayers();
@@ -736,8 +739,8 @@ class GameWorld {
   }
 
   updateRecordFlag(player) {
-    if (!this.recordDistance || this.recordDistance < 100 || this.recordPassed) return;
-    if ((player.distance || 0) >= this.recordDistance) {
+    const dist = player.distance || 0;
+    if (this.recordDistance >= 100 && !this.recordPassed && dist >= this.recordDistance) {
       this.recordPassed = true;
       const pts = player.addScore ? player.addScore(500) : 500;
       if (!player.addScore) player.score += pts;
@@ -745,6 +748,18 @@ class GameWorld {
       if (window.particleSystem) {
         window.particleSystem.emitConfetti?.(player.x + player.width * 0.5, player.y, 34);
         window.particleSystem.addFloatingText?.(`NOVO RECORDE NA PISTA! +${pts}`, player.x + player.width * 0.5, player.y - 78, '#fbbf24', 26);
+      }
+      if (window.game) window.game.flash('power');
+    }
+
+    if (this.rivalDistance >= 100 && this.rivalName && !this.rivalPassed && dist >= this.rivalDistance) {
+      this.rivalPassed = true;
+      const pts = player.addScore ? player.addScore(400) : 400;
+      if (!player.addScore) player.score += pts;
+      if (window.soundSystem && window.soundSystem.playStageClear) window.soundSystem.playStageClear();
+      if (window.particleSystem) {
+        window.particleSystem.emitConfetti?.(player.x + player.width * 0.5, player.y - 10, 26);
+        window.particleSystem.addFloatingText?.(`🏁 PASSOU ${this.rivalName.toUpperCase()}! +${pts}`, player.x + player.width * 0.5, player.y - 96, '#22d3ee', 24);
       }
       if (window.game) window.game.flash('power');
     }
@@ -829,6 +844,7 @@ class GameWorld {
           // Quebra o obstáculo no Turbo ou Modo Radical!
           o.smashed = true;
           player.smashedCount = (player.smashedCount || 0) + 1;
+          if (window.game && window.game.triggerHitstop) window.game.triggerHitstop(34);
           const pts = player.addScore ? player.addScore(150) : 150;
           if (!player.addScore) player.score += pts;
           player.addFever?.(10);
@@ -1039,15 +1055,27 @@ class GameWorld {
 
   collect(player, item) {
     if (item.type === 'coin') {
-      const qty = (player.doubleTimer || 0) > 0 ? 2 : 1;
+      const baseVal = Math.max(1, item.value || 1);
+      const qty = baseVal * ((player.doubleTimer || 0) > 0 ? 2 : 1);
       player.coins += qty;
-      if (player.addScore) player.addScore(50 * qty);
-      else player.score += 50 * qty;
+      const pts = 50 * qty;
+      if (player.addScore) player.addScore(pts);
+      else player.score += pts;
       player.notifyProgress?.('coin', qty);
-      window.soundSystem?.playCoin?.();
-      if (window.particleSystem) {
-        window.particleSystem.emitSparks(item.x, item.y, 10, PALETTE.gold);
-        window.particleSystem.emitSparkle(item.x, item.y);
+      if (baseVal > 1) {
+        player.addFever?.(10);
+        window.soundSystem?.playPowerup?.();
+        if (window.particleSystem) {
+          window.particleSystem.emitSparks(item.x, item.y, 20, '#fbbf24');
+          window.particleSystem.emitShockwave?.(item.x, item.y, '#fbbf24', 64);
+          window.particleSystem.addFloatingText?.(`+${qty} 🪙 SUPER MOEDA!`, item.x, item.y - 26, '#fbbf24', 22);
+        }
+      } else {
+        window.soundSystem?.playCoin?.();
+        if (window.particleSystem) {
+          window.particleSystem.emitSparks(item.x, item.y, 10, PALETTE.gold);
+          window.particleSystem.emitSparkle(item.x, item.y);
+        }
       }
     } else if (item.type === 'turbo') {
       const bonus = (window.progressionManager && window.progressionManager.getUpgradeBonus)
@@ -1437,8 +1465,14 @@ class GameWorld {
           { type: 'coin', x: padX + 114, y: this.groundY - 196, size: 26, collected: false }
         );
         for (let i = 0; i < 3; i++) {
+          const isSuper = i === 1;
           this.collectibles.push({
-            type: 'coin', x: epX + 44 + i * 78, y: epY - 34, size: 26, collected: false
+            type: 'coin',
+            x: epX + 44 + i * 78,
+            y: epY - (isSuper ? 40 : 34),
+            size: isSuper ? 36 : 26,
+            value: isSuper ? 5 : 1,
+            collected: false
           });
         }
         this._maybeSpawnBonusPickup(epX + epW * 0.5, epY - 76, player);
@@ -1495,11 +1529,13 @@ class GameWorld {
       const epY = this.groundY - 134;
       this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
       for (let i = 0; i < 3; i++) {
+        const isSuper = i === 1;
         this.collectibles.push({
           type: 'coin',
           x: epX + 45 + i * 74,
-          y: epY - 34,
-          size: 26,
+          y: epY - (isSuper ? 40 : 34),
+          size: isSuper ? 36 : 26,
+          value: isSuper ? 5 : 1,
           collected: false
         });
       }
@@ -1594,8 +1630,14 @@ class GameWorld {
         platform.width = Math.max(platform.width, (epX - x) + epW + 240);
         this.elevatedPlatforms.push({ x: epX, y: epY, width: epW, height: 18, surfaceType: 'metal' });
         for (let i = 0; i < 3; i++) {
+          const isSuper = i === 1;
           this.collectibles.push({
-            type: 'coin', x: epX + 42 + i * 76, y: epY - 34, size: 26, collected: false
+            type: 'coin',
+            x: epX + 42 + i * 76,
+            y: epY - (isSuper ? 40 : 34),
+            size: isSuper ? 36 : 26,
+            value: isSuper ? 5 : 1,
+            collected: false
           });
         }
       } else if (followRoll < 0.50) {
@@ -3439,14 +3481,29 @@ class GameWorld {
   }
 
   drawRecordFlag(ctx, W) {
-    if (!this.recordDistance || this.recordDistance < 100) return;
-    const flagX = 190 + (this.recordDistance - this.playerDistance) * 10;
+    if (this.recordDistance >= 100) {
+      const label = this.recordPassed
+        ? `🏆 BATIDO! ${this.recordDistance}m`
+        : `🏆 RECORDE ${this.recordDistance}m`;
+      this._drawMilestoneFlag(ctx, W, this.recordDistance, !!this.recordPassed, label, false);
+    }
+    if (this.rivalDistance >= 100 && this.rivalName && Math.abs(this.rivalDistance - (this.recordDistance || 0)) >= 25) {
+      const label = this.rivalPassed
+        ? `🏁 PASSOU ${this.rivalName}!`
+        : `🏁 ${this.rivalName} · ${this.rivalDistance}m`;
+      this._drawMilestoneFlag(ctx, W, this.rivalDistance, !!this.rivalPassed, label, true);
+    }
+  }
+
+  _drawMilestoneFlag(ctx, W, targetDist, passed, label, isRival) {
+    const flagX = 190 + (targetDist - this.playerDistance) * 10;
     if (flagX < -180 || flagX > W + 220) return;
 
     const y = this.groundY;
-    const passed = !!this.recordPassed;
-    const accent = passed ? '#34d399' : '#fbbf24';
-    const accentRgb = passed ? '52, 211, 153' : '251, 191, 36';
+    const accent = passed ? '#34d399' : (isRival ? '#22d3ee' : '#fbbf24');
+    const accentRgb = passed ? '52, 211, 153' : (isRival ? '34, 211, 238' : '251, 191, 36');
+    const flagFill = passed ? '#10b981' : (isRival ? '#7c3aed' : '#f43f7e');
+    const poleH = isRival ? 156 : 182;
 
     ctx.save();
 
@@ -3470,28 +3527,30 @@ class GameWorld {
       ctx.fillRect(flagX, cy + 9, 5, 9);
     }
 
-    // Base e poste dourado com contorno escuro
+    // Base e poste com contorno escuro
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(flagX - 11, y - 6, 22, 7);
-    ctx.fillRect(flagX - 5, y - 182, 10, 182);
-    ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(flagX - 3, y - 180, 6, 180);
-    ctx.fillStyle = '#fef08a';
+    ctx.fillRect(flagX - 5, y - poleH, 10, poleH);
+    ctx.fillStyle = accent;
+    ctx.fillRect(flagX - 3, y - poleH + 2, 6, poleH - 2);
+    ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(flagX, y - 184, 8, 0, Math.PI * 2);
+    ctx.arc(flagX, y - poleH - 2, 7.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = '#0f172a';
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Bandeirola flutuante maior e mais legível
-    const wave = Math.sin(this.time * 0.14) * 4;
-    ctx.fillStyle = passed ? '#10b981' : '#f43f7e';
+    // Bandeirola flutuante legível
+    const wave = Math.sin(this.time * 0.14 + (isRival ? 1.4 : 0)) * 4;
+    ctx.font = '900 13px Outfit, sans-serif';
+    const flagW = Math.max(156, Math.min(240, ctx.measureText(label).width + 30));
+    ctx.fillStyle = flagFill;
     ctx.beginPath();
-    ctx.moveTo(flagX + 3, y - 178);
-    ctx.lineTo(flagX + 158, y - 166 + wave);
-    ctx.lineTo(flagX + 146, y - 134 + wave);
-    ctx.lineTo(flagX + 3, y - 130);
+    ctx.moveTo(flagX + 3, y - poleH + 4);
+    ctx.lineTo(flagX + flagW, y - poleH + 16 + wave);
+    ctx.lineTo(flagX + flagW - 12, y - poleH + 48 + wave);
+    ctx.lineTo(flagX + 3, y - poleH + 52);
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = '#0f172a';
@@ -3502,11 +3561,9 @@ class GameWorld {
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '900 13px Outfit, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const label = passed ? `🏆 BATIDO! ${this.recordDistance}m` : `🏆 RECORDE ${this.recordDistance}m`;
-    ctx.fillText(label, flagX + 12, y - 153 + wave * 0.5);
+    ctx.fillText(label, flagX + 12, y - poleH + 29 + wave * 0.5);
     ctx.restore();
   }
 
@@ -5294,13 +5351,14 @@ class GameWorld {
       ctx.fill();
 
       if (faceW > 0.55) {
-        ctx.fillStyle = 'rgba(146, 64, 14, 0.85)';
-        ctx.font = `800 ${Math.round(r)}px Outfit, sans-serif`;
+        const isSuper = (c.value || 1) > 1;
+        ctx.fillStyle = isSuper ? '#7c2d12' : 'rgba(146, 64, 14, 0.85)';
+        ctx.font = `900 ${Math.round(r * (isSuper ? 1.05 : 1))}px Outfit, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.save();
         ctx.scale(faceW, 1);
-        ctx.fillText('L', 0, 1);
+        ctx.fillText(isSuper ? `${c.value}` : 'L', 0, 1);
         ctx.restore();
       }
     }
@@ -5512,6 +5570,50 @@ class GameWorld {
       }
       ctx.restore();
     }
+
+    this.drawIncomingDangerHints(ctx, W);
+  }
+
+  /** Alerta rápido na borda direita para obstáculos móveis / perigos se aproximando fora da tela. */
+  drawIncomingDangerHints(ctx, W) {
+    const fastTypes = new Set(['barrel', 'drone', 'lava_rock', 'ice_crystal']);
+    const warnings = [];
+    for (const o of this.obstacles) {
+      if (!o.hit && fastTypes.has(o.type) && o.x > W - 8 && o.x < W + 260) {
+        warnings.push({ y: o.y + o.height * 0.5, urgent: o.x < W + 120 });
+      }
+    }
+    if (Array.isArray(this.cameos)) {
+      for (const c of this.cameos) {
+        if (!c.resolved && (c.type === 'penguin_slide' || c.type === 'shark_leap' || c.type === 'lava_meteor') && c.x > W - 12 && c.x < W + 280) {
+          warnings.push({ y: Math.min(this.groundY - 26, Math.max(96, c.y + 18)), urgent: true });
+        }
+      }
+    }
+    if (warnings.length === 0) return;
+
+    const pulse = 0.72 + Math.sin(this.time * 0.38) * 0.28;
+    ctx.save();
+    for (let i = 0; i < Math.min(2, warnings.length); i++) {
+      const w = warnings[i];
+      const wy = Math.max(88, Math.min(this.groundY - 24, w.y));
+      const wx = W - 26;
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = w.urgent ? 'rgba(244, 63, 126, 0.92)' : 'rgba(251, 191, 36, 0.92)';
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(wx, wy, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = '900 15px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', wx, wy + 1);
+    }
+    ctx.restore();
   }
 
   // ---- Utilitários de desenho ----

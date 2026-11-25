@@ -301,6 +301,7 @@ class Game {
 
     this.accumulator = 0;
     this.lastTime = 0;
+    this._hitstopMs = 0;
     this.hudCache = {};
     this.comboBankTimer = 0;
     this.comboBankMult = 1;
@@ -452,6 +453,12 @@ class Game {
     this.registerServiceWorker();
     this.initGamepadListeners();
     this.syncFullscreenButtons();
+    // Pré-carrega o placar global em segundo plano para alimentar a bandeirinha de Rival já na 1ª corrida
+    if (window.onlineLeaderboard && window.onlineLeaderboard.isAvailable && window.onlineLeaderboard.isAvailable()) {
+      window.onlineLeaderboard.fetchTopScores(30)
+        .then((scores) => { if (Array.isArray(scores) && scores.length > 0) this._cachedLeaderboardList = scores; })
+        .catch(() => {});
+    }
 
     requestAnimationFrame(this.animate);
   }
@@ -660,7 +667,11 @@ class Game {
       if (e.code === 'Escape') {
         const setupModal = document.getElementById('match-setup-modal');
         const closetModal = document.getElementById('char-closet-modal');
-        if (setupModal && !setupModal.hidden) {
+        const quickProfileModal = document.getElementById('quick-profile-modal');
+        if (quickProfileModal && !quickProfileModal.hidden) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeQuickProfileModal();
+        } else if (setupModal && !setupModal.hidden) {
           if (window.soundSystem.playUI) window.soundSystem.playUI('back');
           this.closeMatchSetupModal();
         } else if (closetModal && !closetModal.hidden) {
@@ -702,7 +713,8 @@ class Game {
       if (e.code === 'Enter') {
         const setupModal = document.getElementById('match-setup-modal');
         const closetModal = document.getElementById('char-closet-modal');
-        if ((setupModal && !setupModal.hidden) || (closetModal && !closetModal.hidden)) return;
+        const quickProfileModal = document.getElementById('quick-profile-modal');
+        if ((setupModal && !setupModal.hidden) || (closetModal && !closetModal.hidden) || (quickProfileModal && !quickProfileModal.hidden)) return;
         const activeEl = document.activeElement;
         if (this.state === 'GAME_OVER') {
           if (!isInteractiveFocus(activeEl, ['btn-restart'])) {
@@ -839,7 +851,22 @@ class Game {
     };
 
     on('btn-play', () => this.startPlay());
-    on('btn-menu-profile', () => this.showCharacterSelect());
+    on('btn-menu-profile', () => this.openQuickProfileModal());
+    on('btn-quick-profile-x', () => this.closeQuickProfileModal(), 'back');
+    on('btn-quick-profile-closet', () => {
+      this.closeQuickProfileModal();
+      this.showCharacterSelect();
+    });
+    on('btn-quick-profile-create', () => {
+      this.closeQuickProfileModal();
+      this.openCreator();
+    });
+    const quickProfileOverlay = document.getElementById('quick-profile-modal');
+    if (quickProfileOverlay) {
+      quickProfileOverlay.addEventListener('click', (e) => {
+        if (e.target === quickProfileOverlay) this.closeQuickProfileModal();
+      });
+    }
     on('btn-menu-account', () => this.openAuth('MENU'));
     on('btn-open-match-setup', () => this.openMatchSetupModal());
     on('btn-match-setup-x', () => this.closeMatchSetupModal(), 'back');
@@ -2918,8 +2945,14 @@ class Game {
     const localBestDist = this.leaderboard.getAll().reduce((acc, it) => Math.max(acc, it.distance || 0), 0);
     const progBestDist = (window.progressionManager && window.progressionManager.data?.stats?.bestDistance) || 0;
     const recordDistance = Math.max(localBestDist, progBestDist);
+    const rival = this.getNextRivalTarget(recordDistance);
 
-    this.world.reset({ recordDistance });
+    this.world.reset({
+      recordDistance,
+      rivalDistance: rival ? rival.distance : 0,
+      rivalName: rival ? rival.name : ''
+    });
+    this._hitstopMs = 0;
     if (this.player.setSport) this.player.setSport(this.selectedSport);
     this.player.reset(this.world, {
       gameMode: this.selectedMode,
@@ -3820,6 +3853,89 @@ class Game {
   // Laço
   // ==========================================================
 
+  /** Encontra o próximo colocado acima de você no placar para virar bandeirinha de Rival na pista. */
+  getNextRivalTarget(myBestDist = 0) {
+    const pool = (Array.isArray(this._cachedLeaderboardList) && this._cachedLeaderboardList.length > 0)
+      ? this._cachedLeaderboardList
+      : (this.leaderboard ? this.leaderboard.getAll() : []);
+    if (!pool || pool.length === 0) return null;
+
+    const activeChar = window.characterManager?.getSelected?.();
+    const myName = (activeChar && activeChar.name ? activeChar.name : '').trim().toLowerCase();
+    const candidates = pool
+      .filter((it) => {
+        const d = Math.floor(Number(it && it.distance) || 0);
+        if (d < 120) return false;
+        const n = String(it.name || '').trim();
+        if (!n) return false;
+        if (myName && n.toLowerCase() === myName && Math.abs(d - myBestDist) < 30) return false;
+        return d > myBestDist + 20;
+      })
+      .sort((a, b) => (a.distance || 0) - (b.distance || 0));
+
+    if (candidates.length > 0) {
+      return { name: String(candidates[0].name).trim().slice(0, 16), distance: Math.floor(candidates[0].distance) };
+    }
+    return null;
+  }
+
+  /** Modal rápido "Quem vai jogar agora?" para famílias trocarem de perfil em 1 toque. */
+  openQuickProfileModal() {
+    const modal = document.getElementById('quick-profile-modal');
+    const grid = document.getElementById('quick-profile-grid');
+    if (!modal || !grid || !window.characterManager) return;
+
+    const chars = window.characterManager.characters || [];
+    const activeId = window.characterManager.selectedId;
+    const pm = window.progressionManager;
+
+    grid.innerHTML = '';
+    for (const ch of chars) {
+      const unlocked = !ch.unlockPrice || (pm && pm.isOwned && pm.isOwned('characters', ch.id));
+      if (!unlocked) continue;
+      const summary = (pm && typeof pm.getProfileSummary === 'function')
+        ? pm.getProfileSummary(ch.id)
+        : { rank: 1, highScore: 0, coins: 0 };
+
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = `quick-profile-card${ch.id === activeId ? ' active' : ''}`;
+      card.innerHTML = `
+        <img class="quick-profile-avatar" src="${ch.portrait || 'assets/portraits/portrait_luigi_3d.png'}" alt="${ch.name}" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
+        <span class="quick-profile-name">${ch.name}</span>
+        <span class="quick-profile-meta"><span>⭐ Nv.${summary.rank || 1}</span><span>🏆 ${formatNumber(summary.highScore || 0)}</span></span>
+        <span class="quick-profile-meta"><span>🪙 ${formatNumber(summary.coins || 0)}</span></span>
+        ${ch.id === activeId ? '<span class="quick-profile-badge">Jogando agora</span>' : ''}
+      `;
+      card.addEventListener('click', () => {
+        if (window.soundSystem && window.soundSystem.playUI) window.soundSystem.playUI('click');
+        window.characterManager.select(ch.id);
+        if (pm && typeof pm.setActiveProfile === 'function') {
+          pm.setActiveProfile(ch.id);
+        }
+        this.selectedStage = Math.min(this.selectedStage, pm ? pm.getUnlockedStageIndex() : 0);
+        this.highScore = this.getActiveHighScore();
+        this.refreshMenuInfo();
+        this.closeQuickProfileModal();
+        if (window.cloudAuth && window.cloudAuth.scheduleSync) window.cloudAuth.scheduleSync();
+      });
+      grid.appendChild(card);
+    }
+
+    modal.hidden = false;
+  }
+
+  closeQuickProfileModal() {
+    const modal = document.getElementById('quick-profile-modal');
+    if (modal) modal.hidden = true;
+  }
+
+  /** Micro-pausa de impacto arcade (hitstop) para esmagamentos e Looping 360°. */
+  triggerHitstop(ms = 34) {
+    if (this.camera && this.camera.reducedMotion) return;
+    this._hitstopMs = Math.max(this._hitstopMs || 0, Math.min(60, Number(ms) || 0));
+  }
+
   animate(now) {
     requestAnimationFrame(this.animate);
     this.pollGamepad();
@@ -3829,6 +3945,13 @@ class Game {
       let delta = now - this.lastTime;
       if (!isFinite(delta) || delta < 0) delta = STEP_MS;
       this.lastTime = now;
+
+      if (this._hitstopMs > 0) {
+        this._hitstopMs = Math.max(0, this._hitstopMs - delta);
+        this.render();
+        return;
+      }
+
       this.accumulator = Math.min(this.accumulator + delta, STEP_MS * MAX_STEPS_PER_FRAME);
 
       let steps = 0;
