@@ -35,10 +35,11 @@ const STAGES = [
   { id: 'beach',      name: 'Praia & Píer Tropical',      dist: 1400, nextDist: 2400, icon: '🌴', theme: 'beach' },
   { id: 'cosmic',     name: 'Pista Cósmica das Estrelas', dist: 2400, nextDist: 3500, icon: '🚀', theme: 'cosmic' },
   { id: 'volcano',    name: 'Vulcão Magma Radical',       dist: 3500, nextDist: 4600, icon: '🌋', theme: 'volcano' },
-  { id: 'glacier',    name: 'Geleira Aurora Boreal',      dist: 4600, nextDist: 5700, icon: '❄️', theme: 'glacier' }
+  { id: 'glacier',    name: 'Geleira Aurora Boreal',      dist: 4600, nextDist: 5700, icon: '❄️', theme: 'glacier' },
+  { id: 'rain',       name: 'Avenida da Tempestade',      dist: 5700, nextDist: 6800, icon: '🌧️', theme: 'rain' }
 ];
 
-const STAGE_TOUR_START = 5700;
+const STAGE_TOUR_START = 6800;
 const STAGE_TOUR_SPAN = 1000;
 
 function getStageTimeline(dist = 0) {

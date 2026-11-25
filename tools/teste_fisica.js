@@ -1521,21 +1521,23 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
   {
     const tlVolcano = sandbox.getStageTimeline(3600);
     const tlGlacier = sandbox.getStageTimeline(4700);
-    const tlTour2 = sandbox.getStageTimeline(5800);
+    const tlRain = sandbox.getStageTimeline(5800);
+    const tlTour2 = sandbox.getStageTimeline(6900);
     const wBlend = new sandbox.GameWorld();
     let blendsOk = true;
-    for (let d = 0; d <= 8000; d += 250) {
+    for (let d = 0; d <= 9000; d += 250) {
       const b = wBlend.getBiomeBlend(d);
       if (!b || !b.current || !b.next || !Number.isFinite(b.t)) blendsOk = false;
     }
-    check('6 fases e Volta Mundial infinita funcionam com transicao continua',
-      sandbox.STAGES.length === 6
+    check('7 fases (incluindo Fase 7 Chuva) e Volta Mundial infinita funcionam com transicao continua',
+      sandbox.STAGES.length === 7
       && tlVolcano.stageIndex === 4
       && tlGlacier.stageIndex === 5
+      && tlRain.stageIndex === 6
       && tlTour2.tourLap === 2
       && tlTour2.stageIndex === 0
       && blendsOk,
-      `fases=${sandbox.STAGES.length} vol=${tlVolcano.stageIndex} gla=${tlGlacier.stageIndex} volta2=lap${tlTour2.tourLap}/idx${tlTour2.stageIndex}`);
+      `fases=${sandbox.STAGES.length} vol=${tlVolcano.stageIndex} gla=${tlGlacier.stageIndex} rain=${tlRain.stageIndex} volta2=lap${tlTour2.tourLap}/idx${tlTour2.stageIndex}`);
 
     // Looping 360 completo
     const loopRun = newRun();

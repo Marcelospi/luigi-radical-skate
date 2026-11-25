@@ -144,6 +144,26 @@ const BIOMES = [
     starAlpha: 0.65,
     cloudColor: [207, 250, 254, 0.34],
     cloudRim: [165, 243, 252, 0.55]
+  },
+  {
+    id: 'rain',
+    name: 'Avenida da Tempestade',
+    minDist: 5700,
+    maxDist: 6800,
+    sky: ['#040814', '#0b1629', '#16263f', '#243b55', '#334e68', '#486581'],
+    orbColor: ['#e0f2fe', '#94a3b8', '#475569'],
+    orbHalo: [125, 211, 252, 0.30],
+    orbStyle: 'stormMoon',
+    edgeColor: '#38bdf8',
+    roadColor1: '#1e293b',
+    roadColor2: '#131c2e',
+    roadColor3: '#090f1c',
+    hazeColor: [71, 85, 105, 0.44],
+    ambientColor: '#38bdf8',
+    rimColor: '#bae6fd',
+    starAlpha: 0.08,
+    cloudColor: [15, 23, 42, 0.68],
+    cloudRim: [148, 163, 184, 0.42]
   }
 ];
 
@@ -448,7 +468,7 @@ class GameWorld {
     if (type === 'dog_chase') {
       cameo = { type, x: -110, y: gY - 40, width: 58, height: 38, timer: 0, phase: 'chase', resolved: false, outcome: null, barkText: 'AU! AU!' };
     } else if (type === 'police_chase') {
-      cameo = { type, x: -115, y: gY - 64, width: 54, height: 64, timer: 0, phase: 'chase', resolved: false, outcome: null, barkText: 'PRIII!' };
+      cameo = { type, x: -145, y: gY - 112, width: 82, height: 112, timer: 0, phase: 'chase', resolved: false, outcome: null, barkText: 'PRIII!' };
     } else if (type === 'ufo_beam') {
       cameo = { type, x: 1340, y: gY - 248, width: 108, height: 42, timer: 0, phase: 'enter', resolved: false, outcome: null, targetX: basePx + 245 };
     } else if (type === 'shark_leap') {
@@ -483,7 +503,8 @@ class GameWorld {
           beach:      ['shark_leap', 'dog_chase'],
           cosmic:     ['ufo_beam'],
           volcano:    ['lava_meteor', 'dog_chase'],
-          glacier:    ['penguin_slide', 'police_chase']
+          glacier:    ['penguin_slide', 'police_chase'],
+          rain:       ['police_chase', 'dog_chase']
         };
         const pool = pools[biomeId] || ['dog_chase', 'police_chase'];
         const filtered = pool.length > 1 ? pool.filter(t => t !== this._lastCameoType) : pool;
@@ -503,11 +524,12 @@ class GameWorld {
 
       if (c.type === 'dog_chase' || c.type === 'police_chase') {
         const isDog = c.type === 'dog_chase';
-        const restOffset = isDog ? 66 : 78;
+        const restOffset = isDog ? 66 : 94;
+        const baseGroundY = isDog ? this.groundY - 40 : this.groundY - 112;
         c.escapeProgress = c.escapeProgress || 0;
         if (player.isGameOver || player.isInLoop || c.outcome === 'dodged') {
           c.phase = 'leave';
-          c.y = isDog ? this.groundY - 40 : this.groundY - 64;
+          c.y = baseGroundY;
           c.x -= Math.max(5.5, speed * 0.85);
         } else if (c.timer < 158) {
           c.phase = c.timer < 100 ? 'chase' : 'warn';
@@ -539,9 +561,8 @@ class GameWorld {
         } else if (c.timer < 184) {
           c.phase = 'lunge';
           const u = (c.timer - 158) / 26;
-          const baseY = isDog ? this.groundY - 40 : this.groundY - 64;
           c.x = (player.x - restOffset + 6) + Math.sin(u * Math.PI) * (restOffset + 12);
-          c.y = baseY - (isDog ? Math.sin(u * Math.PI) * 26 : Math.sin(u * Math.PI) * 14);
+          c.y = baseGroundY - (isDog ? Math.sin(u * Math.PI) * 26 : Math.sin(u * Math.PI) * 18);
 
           if (!c.resolved && c.timer >= 164) {
             if (player.bottom < this.groundY - 26 || isFast) {
@@ -556,7 +577,7 @@ class GameWorld {
           }
         } else {
           c.phase = 'leave';
-          c.y = isDog ? this.groundY - 40 : this.groundY - 64;
+          c.y = baseGroundY;
           c.x -= Math.max(4.5, speed * 0.72);
         }
         if (c.phase === 'leave' && c.x < -170) this.cameos.splice(i, 1);
@@ -1377,6 +1398,20 @@ class GameWorld {
       if (Math.random() < 0.65) {
         this.collectibles.push({ type: 'coin', x: obsX + 27, y: this.groundY - 126, size: 28, collected: false });
       }
+    } else if (biomeId === 'rain' && roll < 0.40) {
+      // Cone refletivo de tempestade em poça d'água na Avenida da Tempestade
+      firstKind = 'storm_cone';
+      this.obstacles.push({
+        type: 'storm_cone',
+        x: obsX, y: this.groundY - 58,
+        width: 52, height: 58,
+        damageReason: 'Bateu no cone na chuva',
+        hit: false
+      });
+      obsEndX = obsX + 52;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 26, y: this.groundY - 126, size: 28, collected: false });
+      }
     } else if (roll < 0.55) {
       firstKind = 'crate';
       this.obstacles.push({
@@ -1415,7 +1450,7 @@ class GameWorld {
     if (comboChance > 0 && Math.random() < comboChance) {
       const gapBetween = (isHard ? 255 : 285) + Math.random() * 55;
       const obs2X = obsEndX + gapBetween;
-      const isGroundLow = firstKind === 'crate' || firstKind === 'barrel' || firstKind === 'lava_rock' || firstKind === 'ice_crystal';
+      const isGroundLow = firstKind === 'crate' || firstKind === 'barrel' || firstKind === 'lava_rock' || firstKind === 'ice_crystal' || firstKind === 'storm_cone';
       const wantSign = isGroundLow
         ? Math.random() < 0.65
         : Math.random() < 0.30;
@@ -1771,6 +1806,11 @@ class GameWorld {
           far:   this.renderGlacierFar(1400, 340),
           mid:   this.renderGlacierMid(1140, 380),
           props: this.renderGlacierProps(820, 300)
+        },
+        rain: {
+          far:   this.renderRainFar(1400, 340),
+          mid:   this.renderRainMid(1140, 380),
+          props: this.renderRainProps(820, 300)
         }
       },
       textures: {
@@ -2952,6 +2992,88 @@ class GameWorld {
     return c;
   }
 
+  renderRainFar(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    const towers = [
+      [40, 120, 170], [180, 95, 225], [295, 130, 190], [450, 110, 250],
+      [590, 140, 180], [760, 100, 235], [890, 125, 200], [1045, 110, 245],
+      [1190, 140, 185]
+    ];
+    for (const [bx, bw, bh] of towers) {
+      const grad = ctx.createLinearGradient(0, h - bh, 0, h);
+      grad.addColorStop(0, '#1e293b');
+      grad.addColorStop(1, '#090f1c');
+      ctx.fillStyle = grad;
+      ctx.fillRect(bx, h - bh, bw, bh);
+      // Janelas acesas sob a névoa de chuva
+      for (let wy = h - bh + 18; wy < h - 24; wy += 20) {
+        for (let wx = bx + 12; wx < bx + bw - 14; wx += 18) {
+          if (((wx * 7 + wy * 13) % 11) < 4) {
+            ctx.fillStyle = ((wx + wy) % 3 === 0) ? 'rgba(56, 189, 248, 0.34)' : 'rgba(253, 224, 71, 0.32)';
+            ctx.fillRect(wx, wy, 7, 10);
+          }
+        }
+      }
+    }
+    return c;
+  }
+
+  renderRainMid(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    // Viadutos e silhuetas urbanas na chuva
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, h - 72, w, 72);
+    for (let x = 0; x < w; x += 228) {
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(x + 20, h - 145, 86, 145);
+      ctx.fillRect(x + 124, h - 118, 74, 118);
+      // Brilho de vitrines quentes
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.24)';
+      ctx.fillRect(x + 30, h - 62, 66, 28);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
+      ctx.fillRect(x + 134, h - 56, 54, 24);
+    }
+    return c;
+  }
+
+  renderRainProps(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    // Postes de luz clássicos com cone de luz quente brilhando na chuva
+    for (const px of [120, 410, 700]) {
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(px, h);
+      ctx.lineTo(px, h - 190);
+      ctx.lineTo(px + 26, h - 190);
+      ctx.stroke();
+
+      const lx = px + 26;
+      const ly = h - 186;
+      const cone = ctx.createRadialGradient(lx, ly, 4, lx, ly + 85, 110);
+      cone.addColorStop(0, 'rgba(254, 240, 138, 0.42)');
+      cone.addColorStop(0.5, 'rgba(253, 224, 71, 0.12)');
+      cone.addColorStop(1, 'rgba(253, 224, 71, 0)');
+      ctx.fillStyle = cone;
+      ctx.beginPath();
+      ctx.moveTo(lx - 8, ly);
+      ctx.lineTo(lx - 68, h);
+      ctx.lineTo(lx + 68, h);
+      ctx.lineTo(lx + 8, ly);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#fef9c3';
+      ctx.beginPath();
+      ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return c;
+  }
+
   _getPattern(ctx, key) {
     if (this.patterns[key] !== undefined) return this.patterns[key];
     if (!this.layers || !this.layers.textures || !this.layers.textures[key]) return null;
@@ -2985,6 +3107,7 @@ class GameWorld {
     const cosmicW = this._biomeWeight(blend, 'cosmic');
     const volcanoW = this._biomeWeight(blend, 'volcano');
     const glacierW = this._biomeWeight(blend, 'glacier');
+    const rainW = this._biomeWeight(blend, 'rain');
 
     // Estrelas com fade-out suave na praia
     const starAlpha = current.starAlpha + (next.starAlpha - current.starAlpha) * t;
@@ -3007,6 +3130,27 @@ class GameWorld {
     // Holofotes lentos varrendo o céu na metrópole neon
     if (metroW > 0.04) {
       this._drawCyberSearchlights(ctx, W, horizon, metroW);
+    }
+
+    // Relâmpagos sutis no céu da Avenida da Tempestade
+    if (rainW > 0.05) {
+      const cycle = this.time % 290;
+      if (cycle < 10 || (cycle >= 16 && cycle < 22)) {
+        const boltAlpha = (cycle < 10 ? (1 - cycle / 10) : (1 - (cycle - 16) / 6)) * rainW;
+        ctx.save();
+        ctx.fillStyle = `rgba(186, 230, 253, ${(0.18 * boltAlpha).toFixed(3)})`;
+        ctx.fillRect(0, 0, W, horizon);
+        const bx = W * (0.28 + ((Math.floor(this.time / 290) * 37) % 45) / 100);
+        ctx.strokeStyle = `rgba(224, 242, 254, ${(0.88 * boltAlpha).toFixed(3)})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(bx, 18);
+        ctx.lineTo(bx - 18, 92);
+        ctx.lineTo(bx + 12, 138);
+        ctx.lineTo(bx - 14, 215);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Camada distante (com crossfade suave entre biomas)
@@ -4452,10 +4596,66 @@ class GameWorld {
       this.drawLavaRock(ctx, obs);
     } else if (obs.type === 'ice_crystal') {
       this.drawIceCrystal(ctx, obs);
+    } else if (obs.type === 'storm_cone') {
+      this.drawStormCone(ctx, obs);
     } else {
       this.drawSign(ctx, obs);
     }
     ctx.restore();
+  }
+
+  drawStormCone(ctx, o) {
+    const { x, y, width: w, height: h } = o;
+    const cx = x + w * 0.5;
+    // Poça d'água brilhante com ondulação sob o cone
+    const ripple = 1 + Math.sin(this.time * 0.16 + x * 0.05) * 0.08;
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.30)';
+    ctx.beginPath();
+    ctx.ellipse(cx, this.groundY + 3, w * 0.85 * ripple, 7.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(186, 230, 253, 0.55)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+
+    // Base preta do cone
+    ctx.fillStyle = '#0f172a';
+    this.roundRect(ctx, x + 3, y + h - 10, w - 6, 10, 3);
+    ctx.fill();
+
+    // Corpo laranja do cone de tempestade
+    const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+    grad.addColorStop(0, '#fb923c');
+    grad.addColorStop(0.55, '#f97316');
+    grad.addColorStop(1, '#c2410c');
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, y + 3);
+    ctx.lineTo(cx + 6, y + 3);
+    ctx.lineTo(x + w - 8, y + h - 9);
+    ctx.lineTo(x + 8, y + h - 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Faixas refletivas brancas brilhantes na chuva
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, y + h * 0.34);
+    ctx.lineTo(cx + 10, y + h * 0.34);
+    ctx.lineTo(cx + 13, y + h * 0.49);
+    ctx.lineTo(cx - 13, y + h * 0.49);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(cx - 14, y + h * 0.62);
+    ctx.lineTo(cx + 14, y + h * 0.62);
+    ctx.lineTo(cx + 16, y + h * 0.75);
+    ctx.lineTo(cx - 16, y + h * 0.75);
+    ctx.closePath();
+    ctx.fill();
   }
 
   drawLavaRock(ctx, o) {
@@ -4661,56 +4861,215 @@ class GameWorld {
         this._drawCameoTag(ctx, cx, c.y - 12, tag, c.phase === 'warn' ? '#f43f7e' : '#fbbf24');
 
       } else if (c.type === 'police_chase') {
-        const cx = c.x + 26;
-        const cy = c.y + 32;
-        const stride = Math.sin(c.timer * 0.45) * 9;
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+        const cx = c.x + 40;
+        const footY = c.y + 112;
+        const bob = Math.abs(Math.sin(c.timer * 0.42)) * 5;
+        const cy = c.y + 56 - bob;
+        const stride = Math.sin(c.timer * 0.42);
+        const legSwing = stride * 18;
+        const armSwing = -stride * 15;
+
+        // Sombra no chão + poeira nos pés
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
         ctx.beginPath();
-        ctx.ellipse(cx, this.groundY + 4, 22, 5.5, 0, 0, Math.PI * 2);
+        ctx.ellipse(cx, this.groundY + 4, 34, 7.5, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Pernas correndo
+        if (c.timer % 4 < 2) {
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.32)';
+          ctx.beginPath();
+          ctx.arc(cx - 24 - (c.timer % 6) * 2, this.groundY - 4, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Braço traseiro correndo
         ctx.strokeStyle = '#1e3a8a';
-        ctx.lineWidth = 7;
+        ctx.lineWidth = 10;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(cx - 4, cy + 12); ctx.lineTo(cx - 8 + stride, this.groundY - 2);
-        ctx.moveTo(cx + 4, cy + 12); ctx.lineTo(cx + 8 - stride, this.groundY - 2);
+        ctx.moveTo(cx - 6, cy - 12);
+        ctx.lineTo(cx - 20 + armSwing * 0.7, cy + 4);
+        ctx.lineTo(cx - 10 + armSwing, cy + 12);
         ctx.stroke();
 
-        // Tronco uniforme azul
-        ctx.fillStyle = '#1d4ed8';
+        // Pernas articuladas (calça azul-marinho + botas pretas com sola clara)
+        const drawLeg = (hipOffX, swing, color) => {
+          const kneeX = cx + hipOffX + swing * 0.65 + 4;
+          const kneeY = cy + 28 - Math.max(0, swing * 0.35);
+          const bootX = cx + hipOffX + swing;
+          const bootY = Math.min(footY - 4, cy + 52 - Math.max(0, -swing * 0.45));
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 11;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          ctx.moveTo(cx + hipOffX, cy + 12);
+          ctx.lineTo(kneeX, kneeY);
+          ctx.lineTo(bootX, bootY);
+          ctx.stroke();
+          // Bota policial
+          ctx.fillStyle = '#0f172a';
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 2;
+          this.roundRect(ctx, bootX - 7, bootY - 3, 21, 9, 4);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.45)';
+          ctx.fillRect(bootX - 5, bootY + 4, 17, 2);
+        };
+        drawLeg(-6, -legSwing, '#172554');
+        drawLeg(6, legSwing, '#1e3a8a');
+
+        // Corpo inclinado para frente em corrida (uniforme policial completo)
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(0.14);
+
+        // Tronco / camisa policial
+        const shirtGrad = ctx.createLinearGradient(-18, -22, 18, 18);
+        shirtGrad.addColorStop(0, '#2563eb');
+        shirtGrad.addColorStop(1, '#1d4ed8');
+        ctx.fillStyle = shirtGrad;
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.5;
+        this.roundRect(ctx, -17, -22, 34, 38, 10);
+        ctx.fill();
+        ctx.stroke();
+
+        // Gravata e gola
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.moveTo(2, -21);
+        ctx.lineTo(7, -21);
+        ctx.lineTo(6, -3);
+        ctx.lineTo(3.5, 1);
+        ctx.lineTo(1, -3);
+        ctx.closePath();
+        ctx.fill();
+
+        // Distintivo dourado no peito
+        ctx.fillStyle = '#fbbf24';
+        ctx.strokeStyle = '#92400e';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(10, -10, 5.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Cinto tático preto com fivela dourada
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(-17, 7, 34, 8);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(2, 8.5, 8, 5);
+
+        // Rádio + giroflex piscando azul/vermelho no ombro
+        const flashBlue = Math.floor(c.timer / 5) % 2 === 0;
         ctx.strokeStyle = '#0f172a';
         ctx.lineWidth = 2;
-        this.roundRect(ctx, cx - 12, cy - 10, 24, 25, 6);
-        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-13, -18);
+        ctx.lineTo(-17, -34);
         ctx.stroke();
-
-        // Giroflex no ombro piscando azul/vermelho
-        const flashBlue = Math.floor(c.timer / 6) % 2 === 0;
         ctx.fillStyle = flashBlue ? '#38bdf8' : '#f43f7e';
         ctx.beginPath();
-        ctx.arc(cx - 9, cy - 12, 5, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Cabeça e quepe policial
-        ctx.fillStyle = '#fde2c8';
-        ctx.beginPath();
-        ctx.arc(cx + 1, cy - 20, 10.5, 0, Math.PI * 2);
+        ctx.arc(-13, -20, 6, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = '#1e3a8a';
-        this.roundRect(ctx, cx - 10, cy - 33, 24, 9, 3);
-        ctx.fill();
-        ctx.fillStyle = '#fbbf24';
+
+        // Cabeça expressiva + orelha + óculos escuros + bigode + apito
+        ctx.fillStyle = '#fde2c8';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.4;
         ctx.beginPath();
-        ctx.arc(cx + 4, cy - 29, 2.5, 0, Math.PI * 2);
+        ctx.arc(2, -37, 16, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Óculos aviador escuros com brilho
+        ctx.fillStyle = '#0f172a';
+        this.roundRect(ctx, 2, -43, 15, 7.5, 3);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.fillRect(5, -41.5, 5, 2);
+
+        // Bigode clássico do guarda
+        ctx.fillStyle = '#451a03';
+        ctx.beginPath();
+        ctx.ellipse(11, -31.5, 6.5, 2.8, 0.1, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Apito prateado na boca + ondas sonoras quando apita
+        ctx.fillStyle = '#cbd5e1';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 1.5;
+        this.roundRect(ctx, 15, -31, 9, 4.5, 2);
+        ctx.fill();
+        ctx.stroke();
+        if (c.timer % 16 < 10) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(26, -29, 5, -0.7, 0.7);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(27, -29, 9, -0.6, 0.6);
+          ctx.stroke();
+        }
+
+        // Quepe policial detalhado com brasão dourado e aba brilhante
+        ctx.fillStyle = '#1e3a8a';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(-14, -47);
+        ctx.lineTo(-17, -57);
+        ctx.lineTo(18, -59);
+        ctx.lineTo(15, -47);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        // Faixa dourada e brasão
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(-13, -49, 28, 3);
+        ctx.beginPath();
+        ctx.arc(8, -53, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+        // Aba frontal do quepe
+        ctx.fillStyle = '#020617';
+        this.roundRect(ctx, 4, -47.5, 19, 4.5, 2);
+        ctx.fill();
+
+        ctx.restore();
+
+        // Braço frontal estendido segurando lanterna/cassetete apontado para frente
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 10;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx + 8, cy - 10);
+        ctx.lineTo(cx + 24 - armSwing * 0.5, cy - 2);
+        ctx.lineTo(cx + 35 - armSwing * 0.7, cy - 8);
+        ctx.stroke();
+        // Mão + lanterna policial com feixe suave
+        const hx = cx + 35 - armSwing * 0.7;
+        const hy = cy - 8;
+        ctx.fillStyle = '#fde2c8';
+        ctx.beginPath();
+        ctx.arc(hx, hy, 5.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = '#0f172a';
-        ctx.fillRect(cx + 4, cy - 26, 12, 3);
+        ctx.fillRect(hx + 2, hy - 4, 14, 6);
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.28)';
+        ctx.beginPath();
+        ctx.moveTo(hx + 16, hy - 4);
+        ctx.lineTo(hx + 56, hy - 18);
+        ctx.lineTo(hx + 56, hy + 14);
+        ctx.lineTo(hx + 16, hy + 2);
+        ctx.closePath();
+        ctx.fill();
 
         const tag = c.phase === 'warn' ? '! GUARDA! REME ▶▶ OU PULE !' : (c.barkText || 'PRIII!');
-        this._drawCameoTag(ctx, cx, c.y - 14, tag, c.phase === 'warn' ? '#38bdf8' : '#f43f7e');
+        this._drawCameoTag(ctx, cx + 4, c.y - 16, tag, c.phase === 'warn' ? '#38bdf8' : '#f43f7e');
 
       } else if (c.type === 'ufo_beam') {
         const cx = c.x;
@@ -5441,6 +5800,7 @@ class GameWorld {
     const cosmicW = this._biomeWeight(blend, 'cosmic');
     const volcanoW = this._biomeWeight(blend, 'volcano');
     const glacierW = this._biomeWeight(blend, 'glacier');
+    const rainW = this._biomeWeight(blend, 'rain');
 
     // Clima ambiente por bioma (pool pré-alocado, zero GC, fade suave nas transições)
     ctx.save();
@@ -5538,6 +5898,34 @@ class GameWorld {
         ctx.fill();
       }
     }
+
+    if (rainW > 0.03) {
+      // Chuva forte inclinada em duas camadas de profundidade
+      ctx.strokeStyle = `rgba(186, 230, 253, ${(0.52 * rainW).toFixed(3)})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (let i = 0; i < 90; i++) {
+        const rx = ((i * 97 + this.time * 13 + (i % 5) * 41) % (W + 180)) - 60;
+        const ry = ((i * 73 + this.time * 24) % (this.groundY + 60)) - 40;
+        ctx.moveTo(rx, ry);
+        ctx.lineTo(rx - 14, ry + 32);
+      }
+      ctx.stroke();
+
+      // Respingos de chuva batendo no asfalto molhado
+      ctx.strokeStyle = `rgba(224, 242, 254, ${(0.48 * rainW).toFixed(3)})`;
+      ctx.lineWidth = 1.3;
+      for (let i = 0; i < 16; i++) {
+        const life = ((this.time + i * 11) % 18) / 18;
+        const sx = ((i * 139 + Math.floor((this.time + i * 11) / 18) * 193) % W);
+        const r = 3 + life * 10;
+        ctx.globalAlpha = (1 - life) * 0.55 * rainW;
+        ctx.beginPath();
+        ctx.ellipse(sx, this.groundY + 2 + (i % 3) * 6, r, r * 0.28, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
 
     // Brilho atmosférico de piso adaptado ao bioma
@@ -5576,7 +5964,7 @@ class GameWorld {
 
   /** Alerta rápido na borda direita para obstáculos móveis / perigos se aproximando fora da tela. */
   drawIncomingDangerHints(ctx, W) {
-    const fastTypes = new Set(['barrel', 'drone', 'lava_rock', 'ice_crystal']);
+    const fastTypes = new Set(['barrel', 'drone', 'lava_rock', 'ice_crystal', 'storm_cone']);
     const warnings = [];
     for (const o of this.obstacles) {
       if (!o.hit && fastTypes.has(o.type) && o.x > W - 8 && o.x < W + 260) {
