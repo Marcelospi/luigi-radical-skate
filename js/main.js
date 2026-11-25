@@ -55,9 +55,12 @@ class Camera {
   }
 
   update(player, world) {
-    // Acompanha verticalmente quando o skatista sobe alto (rampas / corrimãos)
+    // Acompanha verticalmente quando o skatista sobe alto (rampas / corrimãos / looping 360°)
     const threshold = world.groundY - player.height - 175;
-    const targetY = Math.min(0, (player.y - threshold) * 0.48);
+    const refY = (player.isInLoop && player.currentLoop)
+      ? Math.min(player.y, player.currentLoop.cy - player.currentLoop.radius * 0.72)
+      : player.y;
+    const targetY = Math.min(0, (refY - threshold) * 0.48);
     this.y += (targetY - this.y) * 0.12;
 
     const speedRatio = player.speedNormalized !== undefined
@@ -276,7 +279,10 @@ class Game {
 
     this.world = new window.GameWorld();
     this.player = new window.Player();
-    this.selectedSport = readText('luigi_skate_selected_sport', 'skate');
+    const initialPrefSport = (window.progressionManager && typeof window.progressionManager.getPreferredSport === 'function')
+      ? window.progressionManager.getPreferredSport()
+      : '';
+    this.selectedSport = initialPrefSport || readText('luigi_skate_selected_sport', 'skate');
     if (!this.getSportInfo(this.selectedSport)) this.selectedSport = 'skate';
     if (this.player.setSport) this.player.setSport(this.selectedSport);
     this.player.reset(this.world);   // sem isto o personagem flutua no menu
@@ -285,7 +291,9 @@ class Game {
     this.state = 'LOADING';
     this.input = new Input();
     this.leaderboard = new LeaderboardManager();
-    this.highScore = this.leaderboard.getTopScore();
+    this.highScore = (window.progressionManager && typeof window.progressionManager.getHighScore === 'function')
+      ? window.progressionManager.getHighScore('classic')
+      : this.leaderboard.getTopScore();
     this.lastPlayerName = readText('luigi_skate_last_player_name', 'Luigi');
 
     this.accumulator = 0;
@@ -324,6 +332,10 @@ class Game {
     this._resumeSeq = null;
     this._countAnimRaf = null;
     this._settingsReturnState = 'MENU';
+    this._howToPlayReturnState = 'SETTINGS';
+    this._authReturnState = 'MENU';
+    this._authMode = 'login';
+    this._closetCharId = null;
     this._audioUnlocked = false;
     this._gamepadPrev = {};
     this._gamepadToastShown = false;
@@ -393,8 +405,44 @@ class Game {
 
   async start() {
     await window.characterManager.init();
+    if (window.cloudAuth && typeof window.cloudAuth.init === 'function') {
+      await window.cloudAuth.init();
+      if (typeof window.cloudAuth.onAuthChange === 'function') {
+        window.cloudAuth.onAuthChange(() => {
+          this.renderAuthScreen();
+          this.refreshMenuInfo();
+          if (this.state === 'SELECT_CHAR') this.renderCharacterCards();
+        });
+      }
+      if (typeof window.cloudAuth.onSyncStatus === 'function') {
+        window.cloudAuth.onSyncStatus((status, msg) => {
+          const stEl = document.getElementById('account-sync-status');
+          if (stEl) stEl.textContent = msg || window.cloudAuth.getLastSyncText();
+          if (status === 'ok') {
+            this.refreshMenuInfo();
+            if (this.state === 'SELECT_CHAR') this.renderCharacterCards();
+          }
+        });
+      }
+    }
 
-    this.setState('MENU');
+    const prefSport = (window.progressionManager && typeof window.progressionManager.getPreferredSport === 'function')
+      ? window.progressionManager.getPreferredSport()
+      : this.selectedSport;
+    if (prefSport && this.getSportInfo(prefSport)) {
+      this.selectSport(prefSport, false);
+    }
+
+    const loggedIn = Boolean(window.cloudAuth && typeof window.cloudAuth.isLoggedIn === 'function' && window.cloudAuth.isLoggedIn());
+    let isVisitor = false;
+    try { isVisitor = sessionStorage.getItem('luigi_visitor_session') === '1'; } catch (_) {}
+
+    if (loggedIn || isVisitor) {
+      this.setState('MENU');
+    } else {
+      this.openAuth('MENU');
+    }
+
     this.refreshMenuInfo();
     this.el.highscore.textContent = formatNumber(this.highScore);
     this.registerServiceWorker();
@@ -415,7 +463,7 @@ class Game {
     if (!window.soundSystem) return;
     window.soundSystem.init();
     this._audioUnlocked = true;
-    if (['MENU', 'SHOP', 'MISSIONS', 'SELECT_CHAR', 'LEADERBOARD', 'HOW_TO_PLAY', 'SETTINGS'].includes(this.state)) {
+    if (['AUTH', 'MENU', 'SHOP', 'MISSIONS', 'SELECT_CHAR', 'LEADERBOARD', 'HOW_TO_PLAY', 'SETTINGS'].includes(this.state)) {
       if (typeof window.soundSystem.startMenuMusic === 'function') {
         window.soundSystem.startMenuMusic();
       }
@@ -568,7 +616,15 @@ class Game {
       }
 
       if (e.code === 'Escape') {
-        if (this.state === 'PLAYING' || this.state === 'RESUMING') {
+        const setupModal = document.getElementById('match-setup-modal');
+        const closetModal = document.getElementById('char-closet-modal');
+        if (setupModal && !setupModal.hidden) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeMatchSetupModal();
+        } else if (closetModal && !closetModal.hidden) {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeCharacterCloset();
+        } else if (this.state === 'PLAYING' || this.state === 'RESUMING') {
           this.pauseGame();
         } else if (this.state === 'PAUSED') {
           this.resumeGame();
@@ -578,9 +634,22 @@ class Game {
         } else if (this.state === 'SETTINGS') {
           if (window.soundSystem.playUI) window.soundSystem.playUI('back');
           this.closeSettings();
+        } else if (this.state === 'HOW_TO_PLAY') {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.closeHowToPlay();
+        } else if (this.state === 'AUTH') {
+          let isVisitor = false;
+          try { isVisitor = sessionStorage.getItem('luigi_visitor_session') === '1'; } catch (_) {}
+          if (isVisitor || (window.cloudAuth && window.cloudAuth.isLoggedIn && window.cloudAuth.isLoggedIn())) {
+            if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+            this.setState(this._authReturnState || 'MENU');
+          }
         } else if (this.state === 'CREATOR' && this.isCreatorCameraOpen && this.isCreatorCameraOpen()) {
           if (this.stopCreatorCamera) this.stopCreatorCamera();
-        } else if (['SHOP', 'MISSIONS', 'SELECT_CHAR', 'CREATOR', 'LEADERBOARD', 'HOW_TO_PLAY'].includes(this.state)) {
+        } else if (this.state === 'CREATOR') {
+          if (window.soundSystem.playUI) window.soundSystem.playUI('back');
+          this.leaveCreator();
+        } else if (['SHOP', 'MISSIONS', 'SELECT_CHAR', 'LEADERBOARD'].includes(this.state)) {
           if (window.soundSystem.playUI) window.soundSystem.playUI('back');
           this.setState('MENU');
         }
@@ -589,6 +658,9 @@ class Game {
       if (e.code === 'KeyM') this.toggleMute();
 
       if (e.code === 'Enter') {
+        const setupModal = document.getElementById('match-setup-modal');
+        const closetModal = document.getElementById('char-closet-modal');
+        if ((setupModal && !setupModal.hidden) || (closetModal && !closetModal.hidden)) return;
         const activeEl = document.activeElement;
         if (this.state === 'GAME_OVER') {
           if (!isInteractiveFocus(activeEl, ['btn-restart'])) {
@@ -725,14 +797,40 @@ class Game {
     };
 
     on('btn-play', () => this.startPlay());
+    on('btn-menu-profile', () => this.showCharacterSelect());
+    on('btn-menu-account', () => this.openAuth('MENU'));
+    on('btn-open-match-setup', () => this.openMatchSetupModal());
+    on('btn-match-setup-x', () => this.closeMatchSetupModal(), 'back');
+    on('btn-match-setup-close', () => this.closeMatchSetupModal(), 'back');
+    on('btn-match-setup-play', () => { this.closeMatchSetupModal(); this.startPlay(); });
     on('btn-select-char', () => this.showCharacterSelect());
-    on('btn-character-creator', () => this.openCreator());
+    on('btn-charselect-closet', () => this.openCharacterCloset(window.characterManager.selectedId));
+    on('btn-closet-x', () => this.closeCharacterCloset(), 'back');
+    on('btn-closet-close', () => this.closeCharacterCloset(), 'back');
+    on('btn-closet-open-shop', () => { this.closeCharacterCloset(); this.showShop('accessories'); });
+    on('btn-charselect-create', () => this.openCreator(null, 'SELECT_CHAR'));
+    on('btn-creator-back', () => this.leaveCreator(), 'back');
+    on('btn-restore-chars', async () => {
+      const ok = await this.confirmDialog({
+        icon: '↺',
+        title: 'Restaurar personagens originais?',
+        message: 'Os skatistas originais apagados ou modificados voltarão ao padrão de fábrica. Seus personagens criados do zero serão mantidos!',
+        confirmText: 'Restaurar',
+        cancelText: 'Cancelar'
+      });
+      if (ok) {
+        await window.characterManager.restoreBuiltinCharacters();
+        this.renderCharacterCards();
+        this.refreshMenuInfo();
+      }
+    });
     on('btn-shop', () => this.showShop());
     on('btn-missions', () => this.showMissions());
-    on('btn-footer-missions', () => this.showMissions());
     on('btn-gameover-shop', () => { this.flushOnlineScoreIfNeeded(); this.showShop(); });
     on('btn-leaderboard', () => this.showLeaderboard());
-    on('btn-how-to-play', () => this.setState('HOW_TO_PLAY'));
+    on('btn-how-to-play', () => this.openHowToPlay('SETTINGS'));
+    on('btn-pause-howto', () => this.openHowToPlay('PAUSED'));
+    on('btn-howto-back', () => this.closeHowToPlay(), 'back');
     on('btn-settings-menu', () => this.openSettings('MENU'), 'click', { blur: true });
     on('btn-fullscreen-menu', () => this.toggleFullscreen(), 'click', { blur: true });
     on('btn-fullscreen-hud', () => this.toggleFullscreen(), 'click', { blur: true });
@@ -753,8 +851,28 @@ class Game {
     on('tab-lb-global', () => this.switchLeaderboardTab('global'));
     on('tab-lb-local', () => this.switchLeaderboardTab('local'));
 
+    const setupOverlay = document.getElementById('match-setup-modal');
+    if (setupOverlay) {
+      setupOverlay.addEventListener('click', (e) => {
+        if (e.target === setupOverlay) {
+          window.soundSystem?.playUI?.('back');
+          this.closeMatchSetupModal();
+        }
+      });
+    }
+    const closetOverlay = document.getElementById('char-closet-modal');
+    if (closetOverlay) {
+      closetOverlay.addEventListener('click', (e) => {
+        if (e.target === closetOverlay) {
+          window.soundSystem?.playUI?.('back');
+          this.closeCharacterCloset();
+        }
+      });
+    }
+
     this.initSettingsControls();
     this.initConfirmModal();
+    this.initAuthScreen();
 
     // Abas da Oficina & Loja
     document.querySelectorAll('[data-shop-tab]').forEach(btn => {
@@ -837,6 +955,7 @@ class Game {
         if (window.soundSystem.playUI) window.soundSystem.playUI('click');
         this.selectedMode = btn.dataset.mode || 'classic';
         syncModeUI();
+        this.refreshMenuInfo();
       });
     });
 
@@ -851,6 +970,7 @@ class Game {
           syncModeUI();
         }
         syncDifficultyUI();
+        this.updateMatchSummary();
       });
     });
 
@@ -881,13 +1001,251 @@ class Game {
           b.classList.toggle('active', active);
           b.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
+        this.updateMatchSummary();
       });
     });
   }
 
-  openCreator() {
+  openMatchSetupModal() {
+    const modal = document.getElementById('match-setup-modal');
+    if (!modal) return;
+    this.refreshMenuInfo();
+    modal.hidden = false;
+  }
+
+  closeMatchSetupModal() {
+    const modal = document.getElementById('match-setup-modal');
+    if (modal) modal.hidden = true;
+    this.updateMatchSummary();
+  }
+
+  openHowToPlay(returnState = 'SETTINGS') {
+    this._howToPlayReturnState = ['SETTINGS', 'PAUSED', 'MENU'].includes(returnState) ? returnState : 'MENU';
+    this.setState('HOW_TO_PLAY');
+  }
+
+  closeHowToPlay() {
+    this.setState(this._howToPlayReturnState || 'MENU');
+  }
+
+  openAuth(returnState = 'MENU') {
+    this._authReturnState = ['MENU', 'SELECT_CHAR'].includes(returnState) ? returnState : 'MENU';
+    this.renderAuthScreen();
+    this.setState('AUTH');
+  }
+
+  initAuthScreen() {
+    const tabLogin = document.getElementById('tab-auth-login');
+    const tabReg = document.getElementById('tab-auth-register');
+    const nameField = document.getElementById('auth-name-field');
+    const submitBtn = document.getElementById('btn-auth-submit');
+    const passInput = document.getElementById('auth-password-input');
+    const emailInput = document.getElementById('auth-email-input');
+    const nameInput = document.getElementById('auth-name-input');
+    const feedback = document.getElementById('auth-feedback');
+    const form = document.getElementById('form-auth-email');
+    const btnGoogle = document.getElementById('btn-auth-google');
+    const btnReset = document.getElementById('btn-auth-reset');
+    const btnVisitor = document.getElementById('btn-auth-visitor');
+    const btnSyncNow = document.getElementById('btn-auth-sync-now');
+    const btnPickProfile = document.getElementById('btn-auth-pick-profile');
+    const btnBack = document.getElementById('btn-auth-back');
+    const btnLogout = document.getElementById('btn-auth-logout');
+
+    const showFeedback = (msg, ok = false) => {
+      if (!feedback) return;
+      if (!msg) {
+        feedback.hidden = true;
+        feedback.textContent = '';
+        feedback.classList.remove('is-ok');
+        return;
+      }
+      feedback.textContent = msg;
+      feedback.classList.toggle('is-ok', !!ok);
+      feedback.hidden = false;
+    };
+
+    const setBusy = (busy) => {
+      [btnGoogle, submitBtn, btnReset, btnVisitor].forEach(b => {
+        if (b) b.disabled = !!busy;
+      });
+    };
+
+    const setMode = (mode) => {
+      this._authMode = mode === 'register' ? 'register' : 'login';
+      const isReg = this._authMode === 'register';
+      if (tabLogin) {
+        tabLogin.classList.toggle('active', !isReg);
+        tabLogin.setAttribute('aria-selected', !isReg ? 'true' : 'false');
+      }
+      if (tabReg) {
+        tabReg.classList.toggle('active', isReg);
+        tabReg.setAttribute('aria-selected', isReg ? 'true' : 'false');
+      }
+      if (nameField) nameField.hidden = !isReg;
+      if (passInput) passInput.setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
+      if (submitBtn) submitBtn.textContent = isReg ? 'Criar Conta Grátis' : 'Entrar na Conta';
+      if (btnReset) btnReset.hidden = isReg;
+      showFeedback('');
+    };
+
+    if (tabLogin) tabLogin.addEventListener('click', () => setMode('login'));
+    if (tabReg) tabReg.addEventListener('click', () => setMode('register'));
+    setMode('login');
+
+    if (btnGoogle) {
+      btnGoogle.addEventListener('click', async () => {
+        if (!window.cloudAuth) return;
+        showFeedback('');
+        setBusy(true);
+        const origHtml = btnGoogle.innerHTML;
+        btnGoogle.innerHTML = '<span>⏳ Conectando ao Google…</span>';
+        const res = await window.cloudAuth.signInWithGoogle();
+        btnGoogle.innerHTML = origHtml;
+        setBusy(false);
+        if (res && res.ok) {
+          if (res.redirecting) return;
+          this.refreshMenuInfo();
+          this.setState(this._authReturnState || 'MENU');
+          this.showToast({
+            icon: '☁️',
+            title: `Bem-vindo, ${window.cloudAuth.getDisplayLabel()}!`,
+            subtitle: 'Perfis e recordes sincronizados na nuvem',
+            info: true
+          });
+        } else {
+          showFeedback((res && res.error) || 'Não foi possível entrar com o Google.');
+        }
+      });
+    }
+
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!window.cloudAuth) return;
+        showFeedback('');
+        setBusy(true);
+        const email = emailInput ? emailInput.value.trim() : '';
+        const pass = passInput ? passInput.value : '';
+        const name = nameInput ? nameInput.value.trim() : '';
+        const res = this._authMode === 'register'
+          ? await window.cloudAuth.registerWithEmail(name, email, pass)
+          : await window.cloudAuth.signInWithEmail(email, pass);
+        setBusy(false);
+        if (res && res.ok) {
+          if (passInput) passInput.value = '';
+          this.refreshMenuInfo();
+          this.setState(this._authReturnState || 'MENU');
+          this.showToast({
+            icon: '☁️',
+            title: this._authMode === 'register' ? 'Conta criada na nuvem!' : `Bem-vindo, ${window.cloudAuth.getDisplayLabel()}!`,
+            subtitle: 'Seus personagens agora sincronizam entre aparelhos',
+            info: true
+          });
+        } else {
+          showFeedback((res && res.error) || 'Não foi possível concluir.');
+        }
+      });
+    }
+
+    if (btnReset) {
+      btnReset.addEventListener('click', async () => {
+        if (!window.cloudAuth) return;
+        const email = emailInput ? emailInput.value.trim() : '';
+        setBusy(true);
+        const res = await window.cloudAuth.sendPasswordReset(email);
+        setBusy(false);
+        showFeedback(res.message || res.error || '', !!res.ok);
+      });
+    }
+
+    if (btnVisitor) {
+      btnVisitor.addEventListener('click', () => {
+        try { sessionStorage.setItem('luigi_visitor_session', '1'); } catch (_) {}
+        this.refreshMenuInfo();
+        this.setState('MENU');
+      });
+    }
+
+    if (btnSyncNow) {
+      btnSyncNow.addEventListener('click', async () => {
+        if (!window.cloudAuth) return;
+        btnSyncNow.disabled = true;
+        btnSyncNow.textContent = '⏳ Sincronizando…';
+        const res = await window.cloudAuth.syncAllNow();
+        btnSyncNow.disabled = false;
+        btnSyncNow.textContent = '🔄 Sincronizar Agora';
+        this.renderAuthScreen();
+        this.refreshMenuInfo();
+        this.showToast({
+          icon: res && res.ok ? '☁️' : '📡',
+          title: res && res.ok ? 'Nuvem atualizada!' : 'Falha na sincronização',
+          subtitle: res && res.ok ? `${res.count || 1} perfil(is) sincronizado(s)` : (res?.error || 'Sem internet'),
+          info: true
+        });
+      });
+    }
+
+    if (btnPickProfile) btnPickProfile.addEventListener('click', () => this.showCharacterSelect());
+    if (btnBack) btnBack.addEventListener('click', () => this.setState(this._authReturnState || 'MENU'));
+    if (btnLogout) {
+      btnLogout.addEventListener('click', async () => {
+        const ok = await this.confirmDialog({
+          icon: '☁️',
+          title: 'Sair desta conta?',
+          message: 'Seu progresso já está salvo na nuvem! Ao sair, você poderá entrar com outra conta ou como visitante.',
+          confirmText: 'Sair da Conta',
+          cancelText: 'Ficar',
+          danger: true
+        });
+        if (ok && window.cloudAuth) {
+          await window.cloudAuth.signOutUser();
+          this.renderAuthScreen();
+          this.refreshMenuInfo();
+        }
+      });
+    }
+  }
+
+  renderAuthScreen() {
+    const guestView = document.getElementById('auth-guest-view');
+    const accView = document.getElementById('auth-account-view');
+    const ca = window.cloudAuth;
+    const logged = Boolean(ca && ca.isLoggedIn && ca.isLoggedIn());
+    if (guestView) guestView.hidden = logged;
+    if (accView) accView.hidden = !logged;
+    if (!logged) return;
+
+    const user = ca.getCurrentUser();
+    const label = ca.getDisplayLabel();
+    const badgeEl = document.getElementById('account-avatar-badge');
+    const nameEl = document.getElementById('account-display-name');
+    const emailEl = document.getElementById('account-email-text');
+    const syncEl = document.getElementById('account-sync-status');
+    const countEl = document.getElementById('account-profiles-count');
+
+    if (badgeEl) badgeEl.textContent = (label || 'C').charAt(0).toUpperCase();
+    if (nameEl) nameEl.textContent = label;
+    if (emailEl) emailEl.textContent = (user && user.email) ? user.email : 'Autenticado via Google';
+    if (syncEl) syncEl.textContent = ca.getLastSyncText();
+    if (countEl && window.characterManager) {
+      const unlocked = window.characterManager.characters.filter(c => window.characterManager.isCharacterUnlocked(c.id)).length;
+      countEl.textContent = `Perfis ativos nesta conta: ${unlocked} personagem(ns) com progresso próprio`;
+    }
+  }
+
+  openCreator(editCharId = null, returnState = 'MENU') {
+    this._editingCharId = editCharId || null;
+    this._creatorReturnState = returnState || 'MENU';
     this.setState('CREATOR');
     if (this._refreshCreatorScreen) this._refreshCreatorScreen();
+  }
+
+  leaveCreator() {
+    const targetState = this._creatorReturnState || 'MENU';
+    this._editingCharId = null;
+    this.setState(targetState);
+    if (targetState === 'SELECT_CHAR') this.renderCharacterCards();
   }
 
   getSportInfo(sportId) {
@@ -919,6 +1277,9 @@ class Game {
     this.selectedSport = sport.id;
     if (save) {
       try { localStorage.setItem('luigi_skate_selected_sport', sport.id); } catch (_) {}
+      if (window.progressionManager && typeof window.progressionManager.setPreferredSport === 'function') {
+        window.progressionManager.setPreferredSport(sport.id);
+      }
     }
     if (this.player && this.player.setSport) {
       this.player.setSport(sport.id);
@@ -946,6 +1307,8 @@ class Game {
       const el = document.getElementById(id);
       if (el && labels[i]) el.textContent = labels[i];
     });
+
+    this.updateMatchSummary();
   }
 
   toggleMute() {
@@ -1168,6 +1531,7 @@ class Game {
 
     const screens = {
       LOADING:      'screen-loading',
+      AUTH:         'screen-auth',
       MENU:         'screen-menu',
       SHOP:         'screen-shop',
       MISSIONS:     'screen-missions',
@@ -1183,6 +1547,11 @@ class Game {
       FINISHING:    null
     };
 
+    const setupModal = document.getElementById('match-setup-modal');
+    if (setupModal) setupModal.hidden = true;
+    const closetModal = document.getElementById('char-closet-modal');
+    if (closetModal) closetModal.hidden = true;
+
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
     const target = screens[state];
     if (target) {
@@ -1195,6 +1564,10 @@ class Game {
 
     if (state !== 'CREATOR' && this.stopCreatorCamera) {
       this.stopCreatorCamera();
+    }
+
+    if (state === 'AUTH') {
+      this.renderAuthScreen();
     }
 
     if (state === 'MENU') {
@@ -1220,14 +1593,44 @@ class Game {
     }
   }
 
+  getActiveHighScore() {
+    const pm = window.progressionManager;
+    const modeKey = this.selectedMode === 'time60' ? 'time60' : 'classic';
+    if (pm && typeof pm.getHighScore === 'function') {
+      return pm.getHighScore(modeKey);
+    }
+    return this.leaderboard ? this.leaderboard.getTopScore() : 0;
+  }
+
+  updateMatchSummary() {
+    const sumEl = document.getElementById('menu-match-summary');
+    if (!sumEl) return;
+    const sport = this.getSportInfo(this.selectedSport);
+    const modeLabel = this.selectedMode === 'time60' ? '60s' : (this.selectedMode === 'free' ? 'Treino' : 'Clássico');
+    const diffLabel = this.selectedMode === 'classic'
+      ? (this.selectedDifficulty === 'hard' ? ' · 🔥 Difícil' : ' · 😊 Fácil')
+      : '';
+    const stageObj = window.STAGES && window.STAGES[this.selectedStage];
+    const stageIcon = (stageObj && stageObj.icon) || '🌇';
+    sumEl.textContent = `${sport.icon} ${sport.name} · ${modeLabel}${diffLabel} · ${stageIcon} F${this.selectedStage + 1}`;
+  }
+
   refreshMenuInfo() {
     const hs = document.getElementById('menu-highscore');
     const cc = document.getElementById('menu-current-char');
-    if (hs) hs.textContent = formatNumber(this.highScore);
+    const avatarEl = document.getElementById('menu-profile-avatar');
     const char = window.characterManager.getSelected();
     if (cc && char) cc.textContent = char.name;
+    if (avatarEl && char) {
+      const fallbackSrc = (char.sprites && char.sprites.skate) || 'assets/portraits/portrait_luigi_3d.png';
+      avatarEl.src = char.portrait || fallbackSrc;
+    }
 
     const pm = window.progressionManager;
+    this.highScore = this.getActiveHighScore();
+    if (hs) hs.textContent = formatNumber(this.highScore);
+    if (this.el && this.el.highscore) this.el.highscore.textContent = formatNumber(this.highScore);
+
     if (pm) {
       const coinsEl = document.getElementById('menu-coins');
       const rankEl = document.getElementById('menu-rank');
@@ -1239,7 +1642,7 @@ class Game {
       if (coinsEl) coinsEl.textContent = formatNumber(pm.getCoins());
       if (rankEl) rankEl.textContent = String(pm.getRankLevel());
       if (rankTitleEl) rankTitleEl.textContent = pm.getRankTitle();
-      if (multEl) multEl.textContent = 'x' + pm.getScoreMultiplier().toFixed(1) + ' pts';
+      if (multEl) multEl.textContent = 'x' + pm.getScoreMultiplier().toFixed(1);
       if (misEl) {
         const doneCount = (pm.data.activeMissions || []).filter(m => m.done).length;
         misEl.textContent = `${doneCount}/3`;
@@ -1257,6 +1660,15 @@ class Game {
         btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       });
     }
+
+    const accBtn = document.getElementById('btn-menu-account');
+    const accLabel = document.getElementById('menu-account-label');
+    const ca = window.cloudAuth;
+    const isLogged = Boolean(ca && ca.isLoggedIn && ca.isLoggedIn());
+    if (accBtn) accBtn.classList.toggle('is-online', isLogged);
+    if (accLabel) accLabel.textContent = isLogged ? `${ca.getDisplayLabel()} ✓` : 'Entrar';
+
+    this.updateMatchSummary();
   }
 
   // ==========================================================
@@ -1464,6 +1876,13 @@ class Game {
     const grid = document.getElementById('characters-list');
     grid.innerHTML = '';
 
+    const restoreBtn = document.getElementById('btn-restore-chars');
+    if (restoreBtn) {
+      restoreBtn.hidden = !window.characterManager.hasHiddenOrModifiedBuiltins();
+    }
+
+    const pm = window.progressionManager;
+
     window.characterManager.characters.forEach(char => {
       const unlocked = window.characterManager.isCharacterUnlocked(char.id);
       const card = document.createElement('div');
@@ -1478,14 +1897,31 @@ class Game {
         : null;
       const unlockPrice = (shopEntry && shopEntry.price) || char.unlockPrice || 750;
       const badgeText = unlocked ? (char.badge || 'Skatista') : `🔒 ${formatNumber(unlockPrice)} 🪙 na Oficina`;
+      const canDelete = unlocked && window.characterManager.canDeleteCharacter(char.id);
+      const summary = (unlocked && pm && typeof pm.getProfileSummary === 'function')
+        ? pm.getProfileSummary(char.id)
+        : null;
+
+      const actionsHtml = unlocked
+        ? `<div class="char-card-actions">
+             <button type="button" class="char-action-btn char-closet" title="Meus Itens (Equipar / Desativar)" aria-label="Equipar itens de ${escapeHtml(char.name)}">🎒</button>
+             <button type="button" class="char-action-btn char-edit" title="Editar personagem" aria-label="Editar ${escapeHtml(char.name)}">✏️</button>
+             ${canDelete ? `<button type="button" class="char-action-btn char-delete" title="Excluir personagem" aria-label="Excluir ${escapeHtml(char.name)}">🗑️</button>` : ''}
+           </div>`
+        : '';
+
+      const profilePillHtml = summary
+        ? `<div class="char-profile-pill">⭐ Nv.${summary.rankLevel} · 🪙 ${formatNumber(summary.coins)} · 🏆 ${formatNumber(summary.highScore)}</div>`
+        : '';
 
       card.innerHTML = `
         <span class="char-check">✓</span>
-        ${char.isCustom ? '<button type="button" class="char-delete" title="Remover personagem" aria-label="Remover personagem">✕</button>' : ''}
+        ${actionsHtml}
         <img class="char-avatar" src="${escapeHtml(char.portrait || fallbackSrc)}" alt="${escapeHtml(char.name)}"
              onerror="this.onerror=null;this.src='${escapeHtml(fallbackSrc)}'">
         <div class="char-name">${escapeHtml(char.name)}</div>
         <div class="char-badge">${escapeHtml(badgeText)}</div>
+        ${profilePillHtml}
         <div class="char-desc">${escapeHtml(char.description || '')}</div>
         <div class="char-stats">
           <div class="char-stat"><span>Visual</span><b>${escapeHtml(stats.visual || stats.velocidade || 'Rig 3D')}</b></div>
@@ -1500,9 +1936,31 @@ class Game {
           return;
         }
         window.characterManager.select(char.id);
+        if (pm && typeof pm.getPreferredSport === 'function') {
+          this.selectSport(pm.getPreferredSport(), false);
+        }
         window.soundSystem.playCoin();
         this.renderCharacterCards();
+        this.refreshMenuInfo();
       });
+
+      const closetBtn = card.querySelector('.char-closet');
+      if (closetBtn) {
+        closetBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+          this.openCharacterCloset(char.id);
+        });
+      }
+
+      const editBtn = card.querySelector('.char-edit');
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (window.soundSystem.playUI) window.soundSystem.playUI('click');
+          this.openCreator(char.id, 'SELECT_CHAR');
+        });
+      }
 
       const del = card.querySelector('.char-delete');
       if (del) {
@@ -1510,21 +1968,211 @@ class Game {
           e.stopPropagation();
           const ok = await this.confirmDialog({
             icon: '🗑️',
-            title: 'Remover personagem?',
-            message: `Tem certeza que deseja apagar "${char.name}" da sua lista?`,
-            confirmText: 'Remover',
+            title: 'Excluir personagem?',
+            message: char.isCustom
+              ? `Tem certeza que deseja apagar "${char.name}" e todo o progresso deste perfil?`
+              : `Deseja remover "${char.name}" da lista? Você poderá trazê-lo de volta quando quiser em "Restaurar originais".`,
+            confirmText: 'Excluir',
             cancelText: 'Manter',
             danger: true
           });
           if (ok) {
-            window.characterManager.deleteCustomCharacter(char.id);
+            window.characterManager.deleteCharacter(char.id);
+            if (pm && typeof pm.getPreferredSport === 'function') {
+              this.selectSport(pm.getPreferredSport(), false);
+            }
             this.renderCharacterCards();
+            this.refreshMenuInfo();
           }
         });
       }
 
       grid.appendChild(card);
     });
+  }
+
+  openCharacterCloset(charId) {
+    const cm = window.characterManager;
+    const pm = window.progressionManager;
+    if (!cm || !pm) return;
+    const targetId = charId || cm.selectedId;
+    if (!cm.isCharacterUnlocked(targetId)) return;
+    if (cm.selectedId !== targetId) {
+      cm.select(targetId);
+      if (typeof pm.getPreferredSport === 'function') {
+        this.selectSport(pm.getPreferredSport(), false);
+      }
+      this.renderCharacterCards();
+      this.refreshMenuInfo();
+    }
+    this._closetCharId = targetId;
+    this.renderCharacterCloset();
+    const modal = document.getElementById('char-closet-modal');
+    if (modal) modal.hidden = false;
+  }
+
+  closeCharacterCloset() {
+    const modal = document.getElementById('char-closet-modal');
+    if (modal) modal.hidden = true;
+    this._closetCharId = null;
+    if (this.state === 'SELECT_CHAR') this.renderCharacterCards();
+    this.refreshMenuInfo();
+  }
+
+  renderCharacterCloset() {
+    const cm = window.characterManager;
+    const pm = window.progressionManager;
+    const cat = window.SHOP_CATALOG;
+    if (!cm || !pm || !cat) return;
+    const char = cm.getCharacter(this._closetCharId || cm.selectedId);
+    if (!char) return;
+
+    const previewImg = document.getElementById('closet-preview-img');
+    const nameEl = document.getElementById('closet-char-name');
+    const sumEl = document.getElementById('closet-char-summary');
+    const helmetSec = document.getElementById('closet-helmet-section');
+    const helmetRow = document.getElementById('closet-helmet-row');
+    const accList = document.getElementById('closet-accessories-list');
+    const gearList = document.getElementById('closet-gear-list');
+    const trailsList = document.getElementById('closet-trails-list');
+    const upgList = document.getElementById('closet-upgrades-list');
+
+    const activeAcc = pm.getEquippedAccessory();
+    const gearTheme = pm.getEquippedGearTheme();
+    const activeTrail = pm.getEquippedTrail();
+
+    if (previewImg && typeof cm.buildClosetPreview === 'function') {
+      previewImg.src = cm.buildClosetPreview(char, { gearTheme, accessory: activeAcc });
+    }
+    if (nameEl) nameEl.textContent = char.name;
+    if (sumEl) {
+      sumEl.textContent = `⭐ Nv. ${pm.getRankLevel()} · 🪙 ${formatNumber(pm.getCoins())} · 🏆 ${formatNumber(pm.getHighScore('classic'))}`;
+    }
+
+    // 1. Capacete (para avatares customizados sem capacete fixado em foto)
+    if (helmetSec && helmetRow) {
+      helmetRow.innerHTML = '';
+      if (!char.fullPhoto && char.bodyStyle === 'custom' && !char.hasPhoto) {
+        helmetSec.hidden = false;
+        const on = char.useHelmet !== false;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'closet-chip' + (on ? ' is-active' : '');
+        btn.textContent = on ? '🪖 Capacete SK8 · Ativado ✓' : '🪖 Capacete SK8 · Desativado';
+        btn.addEventListener('click', () => {
+          cm.setCharacterQuickAppearance(char.id, { useHelmet: !on });
+          window.soundSystem?.playUI?.('click');
+          this.renderCharacterCloset();
+          this.renderCharacterCards();
+          this.refreshMenuInfo();
+        });
+        helmetRow.appendChild(btn);
+      } else {
+        helmetSec.hidden = true;
+      }
+    }
+
+    // 2. Acessórios adquiridos por este personagem
+    if (accList) {
+      accList.innerHTML = '';
+      const ownedAcc = cat.accessories.filter(a => pm.isOwned('accessories', a.id));
+      ownedAcc.forEach(item => {
+        const isNone = item.id === 'none';
+        const isActive = isNone ? activeAcc === 'none' : activeAcc === item.id;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'closet-chip' + (isActive ? ' is-active' : '');
+        btn.innerHTML = `<span>${item.icon}</span><span>${escapeHtml(isNone ? 'Sem Acessório' : item.name)}${!isNone && isActive ? ' ✓' : ''}</span>`;
+        btn.addEventListener('click', () => {
+          const res = pm.toggleEquipItem('accessories', item.id);
+          if (res.ok) {
+            cm.setCharacterQuickAppearance(char.id, { accessory: res.activeId });
+            window.soundSystem?.playCoin?.();
+            this.renderCharacterCloset();
+            this.refreshMenuInfo();
+          }
+        });
+        accList.appendChild(btn);
+      });
+    }
+
+    // 3. Pinturas de equipamento adquiridas por este personagem
+    if (gearList) {
+      gearList.innerHTML = '';
+      const ownedGear = cat.gear.filter(g => pm.isOwned('gear', g.id));
+      ownedGear.forEach(item => {
+        const isActive = gearTheme.id === item.id;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'closet-chip' + (isActive ? ' is-active' : '');
+        btn.innerHTML = `
+          <span>${item.icon}</span>
+          <span class="closet-chip-dots">
+            <i style="background:${item.primary}"></i>
+            <i style="background:${item.accent}"></i>
+          </span>
+          <span>${escapeHtml(item.name)}${isActive ? ' ✓' : ''}</span>`;
+        btn.addEventListener('click', () => {
+          const res = pm.toggleEquipItem('gear', item.id);
+          if (res.ok) {
+            window.soundSystem?.playCoin?.();
+            this.renderCharacterCloset();
+          }
+        });
+        gearList.appendChild(btn);
+      });
+    }
+
+    // 4. Rastros adquiridos por este personagem
+    if (trailsList) {
+      trailsList.innerHTML = '';
+      const ownedTrails = cat.trails.filter(t => pm.isOwned('trails', t.id));
+      ownedTrails.forEach(item => {
+        const isActive = activeTrail.id === item.id;
+        const dots = (item.colors || []).slice(0, 3).map(c => `<i style="background:rgb(${c})"></i>`).join('');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'closet-chip' + (isActive ? ' is-active' : '');
+        btn.innerHTML = `
+          <span>${item.icon}</span>
+          ${dots ? `<span class="closet-chip-dots">${dots}</span>` : ''}
+          <span>${escapeHtml(item.id === 'classic' ? 'Desativado (Padrão)' : item.name)}${item.id !== 'classic' && isActive ? ' ✓' : ''}</span>`;
+        btn.addEventListener('click', () => {
+          const res = pm.toggleEquipItem('trails', item.id);
+          if (res.ok) {
+            window.soundSystem?.playCoin?.();
+            this.renderCharacterCloset();
+          }
+        });
+        trailsList.appendChild(btn);
+      });
+    }
+
+    // 5. Poderes adquiridos (ativar ou desativar individualmente)
+    if (upgList) {
+      upgList.innerHTML = '';
+      const boughtUpgrades = cat.upgrades.filter(u => pm.getUpgradeLevel(u.id) > 0);
+      if (boughtUpgrades.length === 0) {
+        upgList.innerHTML = '<span class="closet-empty-note">Compre poderes na Oficina para ativar ou desativar aqui.</span>';
+      } else {
+        boughtUpgrades.forEach(upg => {
+          const lvl = pm.getUpgradeLevel(upg.id);
+          const enabled = pm.isUpgradeEnabled(upg.id);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'closet-chip' + (enabled ? ' is-active' : '');
+          btn.innerHTML = `<span>${upg.icon}</span><span>${escapeHtml(upg.name)} Nv.${lvl} · ${enabled ? 'Ativado ✓' : 'Desativado'}</span>`;
+          btn.addEventListener('click', () => {
+            const res = pm.toggleUpgradeEnabled(upg.id);
+            if (res.ok) {
+              window.soundSystem?.playUI?.('click');
+              this.renderCharacterCloset();
+            }
+          });
+          upgList.appendChild(btn);
+        });
+      }
+    }
   }
 
   initCreator() {
@@ -1541,6 +2189,7 @@ class Game {
     const helmetInput = document.getElementById('custom-use-helmet');
     const fullPhotoInput = document.getElementById('custom-full-photo');
     const saveBtn = document.getElementById('btn-save-custom-char');
+    const creatorTitleEl = document.getElementById('creator-screen-title');
 
     const btnGallery = document.getElementById('btn-creator-gallery');
     const btnCamera = document.getElementById('btn-creator-camera');
@@ -1560,6 +2209,9 @@ class Game {
     const accRow = document.getElementById('creator-accessory-row');
 
     let loadedRawImg = null;
+    let clearedPhoto = false;
+    let customizedBody = false;
+    let existingCharRef = null;
     let cameraStream = null;
     let cameraRequestId = 0;
     let facingMode = 'user';
@@ -1707,28 +2359,86 @@ class Game {
       if (dragHint) dragHint.hidden = !loadedRawImg || !!isFull;
     };
 
+    const syncCreatorControlsFromState = () => {
+      if (skinRow) {
+        skinRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x.dataset.id === customState.skinTone));
+      }
+      if (outfitRow) {
+        outfitRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x.dataset.id === customState.outfit));
+      }
+      if (hairRow) {
+        hairRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x.dataset.id === customState.hairColor));
+      }
+      document.querySelectorAll('#creator-headsize-row [data-headsize]').forEach(x => {
+        const isSel = (x.dataset.headsize || 'large') === customState.headSize;
+        x.classList.toggle('active', isSel);
+        x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+      });
+      document.querySelectorAll('#creator-gender-row [data-gender]').forEach(x => {
+        const isSel = (x.dataset.gender || 'boy') === customState.gender;
+        x.classList.toggle('active', isSel);
+        x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
+      });
+    };
+
     const refreshPreview = () => {
       syncSliderState();
       const opts = getOptions();
+      const editingHasKeptPhoto = !!(existingCharRef && !loadedRawImg && !clearedPhoto);
+      const existingSprite = (editingHasKeptPhoto && existingCharRef.fullPhoto)
+        ? window.characterManager.getSprite(existingCharRef.id, 'skate')
+        : null;
+      const sourceForFullPhoto = loadedRawImg || existingSprite;
+
       if (fullBodyPreview && window.characterManager.buildFullBodyPreview) {
         try {
-          fullBodyPreview.src = window.characterManager.buildFullBodyPreview(loadedRawImg, opts);
+          if (editingHasKeptPhoto && existingCharRef.bodyStyle !== 'custom' && !customizedBody && !(existingCharRef.fullPhoto && !opts.fullPhoto)) {
+            fullBodyPreview.src = existingCharRef.portrait
+              || (existingCharRef.sprites && existingCharRef.sprites.skate)
+              || window.characterManager.buildFullBodyPreview(sourceForFullPhoto, opts);
+          } else {
+            const precomposedHead = (editingHasKeptPhoto && existingCharRef.hasPhoto)
+              ? window.characterManager.getHeadImage(existingCharRef.id)
+              : null;
+            const previewSrc = window.characterManager.buildFullBodyPreview(sourceForFullPhoto, {
+              ...opts,
+              precomposedHead
+            });
+            fullBodyPreview.src = previewSrc
+              || (editingHasKeptPhoto && existingCharRef.portrait)
+              || '';
+          }
         } catch (_) {}
       }
-      if (!loadedRawImg) {
-        preview.hidden = true;
-        prompt.style.display = '';
-        dropArea.classList.remove('has-photo');
+
+      if (loadedRawImg) {
+        try {
+          preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, opts);
+        } catch (_) {
+          preview.src = loadedRawImg.src || '';
+        }
+        preview.hidden = false;
+        prompt.style.display = 'none';
+        dropArea.classList.add('has-photo');
         return;
       }
-      try {
-        preview.src = window.characterManager.buildCreatorPreview(loadedRawImg, opts);
-      } catch (_) {
-        preview.src = loadedRawImg.src || '';
+
+      if (editingHasKeptPhoto && (existingCharRef.hasPhoto || existingCharRef.bodyStyle !== 'custom')) {
+        const fallbackExisting = existingCharRef.headSprite
+          || existingCharRef.portrait
+          || (existingCharRef.sprites && existingCharRef.sprites.skate)
+          || 'assets/portraits/portrait_luigi_3d.png';
+        preview.src = fallbackExisting;
+        preview.hidden = false;
+        prompt.style.display = 'none';
+        dropArea.classList.add('has-photo');
+        if (dragHint) dragHint.hidden = true;
+        return;
       }
-      preview.hidden = false;
-      prompt.style.display = 'none';
-      dropArea.classList.add('has-photo');
+
+      preview.hidden = true;
+      prompt.style.display = '';
+      dropArea.classList.remove('has-photo');
     };
 
     // Popula botões de cor da pele, roupa, cabelo e acessórios desbloqueados
@@ -1738,12 +2448,14 @@ class Game {
       pal.SKIN_TONES.forEach(s => {
         const b = document.createElement('button');
         b.type = 'button';
+        b.dataset.id = s.id;
         b.className = 'swatch-btn' + (customState.skinTone === s.id ? ' active' : '');
         b.style.background = s.hex;
         b.title = s.name;
         b.addEventListener('click', () => {
           customState.skinTone = s.id;
-          skinRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          customizedBody = true;
+          syncCreatorControlsFromState();
           refreshPreview();
         });
         skinRow.appendChild(b);
@@ -1754,12 +2466,14 @@ class Game {
       pal.OUTFITS.forEach(o => {
         const b = document.createElement('button');
         b.type = 'button';
+        b.dataset.id = o.id;
         b.className = 'swatch-btn' + (customState.outfit === o.id ? ' active' : '');
         b.style.background = `linear-gradient(135deg, ${o.top} 55%, ${o.topAccent} 55%)`;
         b.title = o.name;
         b.addEventListener('click', () => {
           customState.outfit = o.id;
-          outfitRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          customizedBody = true;
+          syncCreatorControlsFromState();
           refreshPreview();
         });
         outfitRow.appendChild(b);
@@ -1770,12 +2484,14 @@ class Game {
       pal.HAIR_COLORS.forEach(h => {
         const b = document.createElement('button');
         b.type = 'button';
+        b.dataset.id = h.id;
         b.className = 'swatch-btn' + (customState.hairColor === h.id ? ' active' : '');
         b.style.background = h.hex;
         b.title = h.name;
         b.addEventListener('click', () => {
           customState.hairColor = h.id;
-          hairRow.querySelectorAll('.swatch-btn').forEach(x => x.classList.toggle('active', x === b));
+          customizedBody = true;
+          syncCreatorControlsFromState();
           refreshPreview();
         });
         hairRow.appendChild(b);
@@ -1786,7 +2502,20 @@ class Game {
       if (!accRow || !window.SHOP_CATALOG) return;
       const pm = window.progressionManager;
       accRow.innerHTML = '';
-      const list = window.SHOP_CATALOG.accessories.filter(a => !pm || pm.isOwned('accessories', a.id));
+      let list;
+      if (this._editingCharId) {
+        const editProfile = pm && pm.profiles ? pm.profiles[this._editingCharId] : null;
+        const ownedAcc = editProfile && editProfile.owned && Array.isArray(editProfile.owned.accessories)
+          ? editProfile.owned.accessories
+          : null;
+        list = window.SHOP_CATALOG.accessories.filter(a => {
+          if (ownedAcc) return ownedAcc.includes(a.id);
+          return !pm || pm.isOwned('accessories', a.id);
+        });
+      } else {
+        // Novo personagem começa do zero (apenas acessórios iniciais gratuitos)
+        list = window.SHOP_CATALOG.accessories.filter(a => a.price === 0);
+      }
       if (!list.some(a => a.id === customState.accessory)) customState.accessory = 'none';
       list.forEach(a => {
         const b = document.createElement('button');
@@ -1813,11 +2542,8 @@ class Game {
     document.querySelectorAll('#creator-headsize-row [data-headsize]').forEach(b => {
       b.addEventListener('click', () => {
         customState.headSize = b.dataset.headsize || 'large';
-        document.querySelectorAll('#creator-headsize-row [data-headsize]').forEach(x => {
-          const isSel = x === b;
-          x.classList.toggle('active', isSel);
-          x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
-        });
+        customizedBody = true;
+        syncCreatorControlsFromState();
         refreshPreview();
       });
     });
@@ -1825,11 +2551,8 @@ class Game {
     document.querySelectorAll('#creator-gender-row [data-gender]').forEach(b => {
       b.addEventListener('click', () => {
         customState.gender = b.dataset.gender || 'boy';
-        document.querySelectorAll('#creator-gender-row [data-gender]').forEach(x => {
-          const isSel = x === b;
-          x.classList.toggle('active', isSel);
-          x.setAttribute('aria-pressed', isSel ? 'true' : 'false');
-        });
+        customizedBody = true;
+        syncCreatorControlsFromState();
         refreshPreview();
       });
     });
@@ -1838,6 +2561,8 @@ class Game {
       btnNoPhoto.addEventListener('click', () => {
         stopCamera();
         loadedRawImg = null;
+        clearedPhoto = true;
+        customizedBody = true;
         if (fileInput) fileInput.value = '';
         if (fullPhotoInput) fullPhotoInput.checked = false;
         refreshPreview();
@@ -1845,12 +2570,59 @@ class Game {
     }
 
     this._refreshCreatorScreen = () => {
+      const editChar = this._editingCharId ? window.characterManager.getCharacter(this._editingCharId) : null;
+      if (editChar && editChar.id === this._editingCharId) {
+        existingCharRef = editChar;
+        loadedRawImg = null;
+        clearedPhoto = false;
+        customizedBody = false;
+        nameInput.value = editChar.name || '';
+        customState.headSize = editChar.headSize || 'large';
+        customState.gender = editChar.gender || 'boy';
+        customState.skinTone = editChar.skinTone || 'fair';
+        customState.outfit = editChar.outfit || 'street_blue';
+        customState.hairColor = editChar.hairColor || 'brown';
+        customState.accessory = editChar.accessory || 'none';
+        if (helmetInput) helmetInput.checked = editChar.useHelmet !== false;
+        if (fullPhotoInput) fullPhotoInput.checked = !!editChar.fullPhoto;
+        if (flipInput) flipInput.checked = false;
+        if (faceXInput) faceXInput.value = '0';
+        if (faceYInput) faceYInput.value = '0';
+        if (zoomInput) zoomInput.value = '1.15';
+        if (creatorTitleEl) creatorTitleEl.textContent = `Editar: ${editChar.name}`;
+        if (saveBtn) saveBtn.textContent = 'Salvar alterações';
+      } else {
+        this._editingCharId = null;
+        existingCharRef = null;
+        loadedRawImg = null;
+        clearedPhoto = false;
+        customizedBody = false;
+        nameInput.value = '';
+        customState.headSize = 'large';
+        customState.gender = 'boy';
+        customState.skinTone = 'fair';
+        customState.outfit = 'street_blue';
+        customState.hairColor = 'brown';
+        customState.accessory = 'none';
+        if (helmetInput) helmetInput.checked = true;
+        if (fullPhotoInput) fullPhotoInput.checked = false;
+        if (flipInput) flipInput.checked = false;
+        if (faceXInput) faceXInput.value = '0';
+        if (faceYInput) faceYInput.value = '0';
+        if (zoomInput) zoomInput.value = '1.15';
+        if (creatorTitleEl) creatorTitleEl.textContent = 'Estúdio de personagens';
+        if (saveBtn) saveBtn.textContent = 'Salvar e jogar';
+      }
+      if (fileInput) fileInput.value = '';
+      showCameraError('');
+      syncCreatorControlsFromState();
       refreshCreatorAccessories();
       refreshPreview();
     };
 
     const setRawImage = (img) => {
       loadedRawImg = img;
+      clearedPhoto = false;
       showCameraError('');
       refreshPreview();
     };
@@ -1982,18 +2754,30 @@ class Game {
 
     saveBtn.addEventListener('click', async () => {
       const name = nameInput.value.trim() || 'Skatista Radical';
-      const original = saveBtn.textContent;
+      const isEditing = !!this._editingCharId;
       saveBtn.textContent = 'Processando…';
       saveBtn.disabled = true;
 
       try {
         stopCamera();
         const opts = getOptions();
-        await window.characterManager.createCustomCharacterFromImage(loadedRawImg, name, opts);
+        if (isEditing) {
+          await window.characterManager.updateCharacter(this._editingCharId, loadedRawImg, name, {
+            ...opts,
+            clearPhoto: clearedPhoto,
+            customizedBody
+          });
+        } else {
+          await window.characterManager.createCustomCharacterFromImage(loadedRawImg, name, opts);
+        }
         if (window.progressionManager && opts.accessory && window.progressionManager.isOwned('accessories', opts.accessory)) {
           window.progressionManager.equipItem('accessories', opts.accessory);
         }
+        this._editingCharId = null;
+        existingCharRef = null;
         loadedRawImg = null;
+        clearedPhoto = false;
+        customizedBody = false;
         preview.hidden = true;
         if (dragHint) dragHint.hidden = true;
         dropArea.classList.remove('has-photo');
@@ -2007,12 +2791,13 @@ class Game {
         if (helmetInput) helmetInput.checked = true;
         if (fullPhotoInput) fullPhotoInput.checked = false;
         refreshPreview();
+        this.refreshMenuInfo();
         this.showCharacterSelect();
       } catch (err) {
         console.error(err);
         showCameraError('Não foi possível salvar o personagem. Tente outra imagem ou estilo.');
       } finally {
-        saveBtn.textContent = original;
+        saveBtn.textContent = this._editingCharId ? 'Salvar alterações' : 'Salvar e jogar';
         saveBtn.disabled = false;
       }
     });
@@ -2121,6 +2906,8 @@ class Game {
       const ch = window.characterManager.getSelected();
       this.el.avatar.src = (ch && ch.portrait) || 'assets/portraits/portrait_luigi_3d.png';
     }
+    this.highScore = this.getActiveHighScore();
+    if (this.el.highscore) this.el.highscore.textContent = formatNumber(this.highScore);
 
     const isFree = this.player.gameMode === 'free';
     if (this.el.finishFreeBtn) this.el.finishFreeBtn.hidden = !isFree;
@@ -2266,7 +3053,15 @@ class Game {
     const isFree = p.gameMode === 'free' || p.endedFreeMode;
     const isCleanTimeUp = p.gameMode === 'time60' && (p.timeLeftSteps || 0) <= 0;
     const runDist = Math.max(0, Math.floor(p.sessionDistance !== undefined ? p.sessionDistance : (p.distance || 0)));
-    const prevTopScore = this.leaderboard.getTopScore();
+    const pm = window.progressionManager;
+    const scoreModeKey = this.selectedMode === 'time60' ? 'time60' : 'classic';
+    const prevCharHighScore = (pm && typeof pm.getHighScore === 'function')
+      ? pm.getHighScore(scoreModeKey)
+      : this.leaderboard.getTopScore();
+
+    if (!isFree && p.score > 0 && pm && typeof pm.recordHighScore === 'function') {
+      pm.recordHighScore(p.score, scoreModeKey);
+    }
 
     if (this.el.gameoverTitle) {
       if (isFree) {
@@ -2314,8 +3109,12 @@ class Game {
       this.el.registerBox.hidden = isFree || p.score <= 0;
     }
 
+    const activeChar = window.characterManager.getSelected();
+    const charSavedName = activeChar ? readText('luigi_skate_char_name_' + activeChar.id, '') : '';
+    const defaultLbName = charSavedName || (activeChar && activeChar.name) || this.lastPlayerName || 'Luigi';
+    this.lastPlayerName = defaultLbName;
     if (this.el.playerNameInput) {
-      this.el.playerNameInput.value = this.lastPlayerName || 'Luigi';
+      this.el.playerNameInput.value = defaultLbName;
     }
     if (this.el.btnSaveScore) {
       this.el.btnSaveScore.disabled = false;
@@ -2339,10 +3138,14 @@ class Game {
       this.loadLeaderboardView('gameover-leaderboard-list', 'gameover-leaderboard-status', 'global');
     }
 
-    // Destaque de novo recorde geral comparado ao recorde anterior à partida
+    // Destaque de novo recorde pessoal deste personagem
     const banner = document.getElementById('new-record-banner');
     if (banner) {
-      banner.hidden = isFree || p.score <= prevTopScore || p.score === 0;
+      banner.hidden = isFree || p.score <= prevCharHighScore || p.score === 0;
+    }
+
+    if (window.cloudAuth && typeof window.cloudAuth.flushPendingSync === 'function') {
+      window.cloudAuth.flushPendingSync().catch(() => {});
     }
   }
 
@@ -2404,7 +3207,11 @@ class Game {
     const input = this.el.playerNameInput;
     const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
     this.lastPlayerName = name;
-    try { localStorage.setItem('luigi_skate_last_player_name', name); } catch (_) {}
+    try {
+      localStorage.setItem('luigi_skate_last_player_name', name);
+      const ch = window.characterManager.getSelected();
+      if (ch && ch.id) localStorage.setItem('luigi_skate_char_name_' + ch.id, name);
+    } catch (_) {}
     if (this._lastSavedEntryId) {
       this.leaderboard.updateEntryName(this._lastSavedEntryId, name);
     }
@@ -2418,7 +3225,11 @@ class Game {
     const input = this.el.playerNameInput;
     const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
     this.lastPlayerName = name;
-    try { localStorage.setItem('luigi_skate_last_player_name', name); } catch (_) {}
+    try {
+      localStorage.setItem('luigi_skate_last_player_name', name);
+      const ch = window.characterManager.getSelected();
+      if (ch && ch.id) localStorage.setItem('luigi_skate_char_name_' + ch.id, name);
+    } catch (_) {}
 
     let entry = null;
 
@@ -2431,7 +3242,7 @@ class Game {
       this._lastSavedEntryId = entry ? entry.id : null;
     }
 
-    this.highScore = this.leaderboard.getTopScore();
+    this.highScore = this.getActiveHighScore();
     if (this.el.highscore) this.el.highscore.textContent = formatNumber(this.highScore);
     const hs = document.getElementById('menu-highscore');
     if (hs) hs.textContent = formatNumber(this.highScore);
@@ -2599,6 +3410,10 @@ class Game {
       return;
     }
 
+    const myUid = (window.cloudAuth && typeof window.cloudAuth.getUid === 'function')
+      ? window.cloudAuth.getUid()
+      : '';
+
     let html = '';
     list.forEach((item, index) => {
       let rankBadge = `${index + 1}º`;
@@ -2624,16 +3439,24 @@ class Game {
         || 'assets/portraits/portrait_luigi_3d.png';
 
       const isCurrentRun = !!(this._lastSavedEntryId && item.id === this._lastSavedEntryId);
+      const isOwnAcc = Boolean(myUid && item.uid && item.uid === myUid);
+      const verifiedHtml = item.verified
+        ? `<span class="leader-verified-badge" title="Conta verificada${item.accountName ? ' · ' + escapeHtml(item.accountName) : ''}">✓</span>`
+        : '';
+      const accountMeta = item.accountName
+        ? `<span>👤 ${escapeHtml(item.accountName)}</span>`
+        : '';
       html += `
-        <div class="leader-item ${rankClass}${isCurrentRun ? ' is-current-run' : ''}">
+        <div class="leader-item ${rankClass}${isCurrentRun ? ' is-current-run' : ''}${isOwnAcc ? ' is-own-account' : ''}">
           <div class="leader-col-left">
             <span class="leader-rank">${rankBadge}</span>
             <img class="leader-avatar" src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(item.characterName)}" onerror="this.onerror=null;this.src='assets/portraits/portrait_luigi_3d.png'">
             <div class="leader-info">
-              <span class="leader-name">${escapeHtml(item.name)} ${index === 0 ? '<span title="Campeão">👑</span>' : ''}</span>
+              <span class="leader-name">${escapeHtml(item.name)}${verifiedHtml} ${index === 0 ? '<span title="Campeão">👑</span>' : ''}</span>
               <div class="leader-meta">
                 <span>📅 ${escapeHtml(item.date)} às ${escapeHtml(item.time)}</span>
                 <span>• ${escapeHtml(item.sportIcon || '🛹')} ${escapeHtml(item.characterName)}</span>
+                ${accountMeta}
               </div>
             </div>
           </div>
@@ -2735,14 +3558,18 @@ class Game {
     }
 
     if (this.el.stageTitle && this.el.stageIcon && this.el.stageProgress) {
-      let progressRatio = 1;
-      let stageTitle = 'Fase 4: Cósmica ★';
-      if (currentStage.nextDist !== Infinity) {
-        const stageSpan = currentStage.nextDist - currentStage.dist;
-        const currentInStage = Math.max(0, p.distance - currentStage.dist);
-        progressRatio = Math.min(1, Math.max(0, currentInStage / stageSpan));
-        stageTitle = `Fase ${p.currentStageIndex + 1}: ${currentStage.name.split(' ')[0]}`;
-      }
+      const tl = typeof window.getStageTimeline === 'function' ? window.getStageTimeline(p.distance) : null;
+      const segStart = tl ? tl.segStart : currentStage.dist;
+      const segEnd = tl ? tl.segEnd : currentStage.nextDist;
+      const stageSpan = Math.max(1, segEnd - segStart);
+      const progressRatio = isFinite(segEnd)
+        ? Math.min(1, Math.max(0, (p.distance - segStart) / stageSpan))
+        : 1;
+      const tourLap = tl ? tl.tourLap : 1;
+      const shortName = currentStage.name.split(' ')[0];
+      const stageTitle = tourLap > 1
+        ? `Volta ${tourLap} · ${shortName}`
+        : `Fase ${p.currentStageIndex + 1}: ${shortName}`;
       const progKey = progressRatio.toFixed(3);
       if (this.hudCache.stageProg !== progKey) {
         this.hudCache.stageProg = progKey;
@@ -2896,15 +3723,17 @@ class Game {
     }, 2200);
   }
 
-  onStageUnlocked(stage) {
+  onStageUnlocked(stage, tourLap = 1) {
     const banner = this.el.stageBanner;
-    if (!banner) return;
+    if (!banner || !stage) return;
 
     // As duas ocupam o mesmo canto do rodapé; a dica sai de cena para o aviso
     if (this.el.runHint) this.el.runHint.classList.remove('visible');
     if (this._hintTimer) { clearTimeout(this._hintTimer); this._hintTimer = null; }
     this.el.stageBannerIcon.textContent = stage.icon || '🎉';
-    this.el.stageBannerTitle.textContent = `FASE ${this.player.currentStageIndex + 1} DESBLOQUEADA!`;
+    this.el.stageBannerTitle.textContent = tourLap > 1
+      ? `VOLTA ${tourLap} · CENÁRIO RENOVADO!`
+      : `FASE ${this.player.currentStageIndex + 1} DESBLOQUEADA!`;
     this.el.stageBannerName.textContent = stage.name;
     if (this.el.stageBannerReward) {
       const sportIcon = this.getSportInfo(this.selectedSport).icon || '🛹';
@@ -3049,6 +3878,11 @@ class Game {
         } else if (ev.type === 'grind_start') {
           this.camera.shake(3.2, 0.25, 0.85);
           this.haptic(10);
+        } else if (ev.type === 'loop_complete') {
+          this.camera.punchZoom(-0.028);
+          this.camera.shake(5, 0.2, 0.8);
+          this.flash('power');
+          this.haptic([20, 20, 30]);
         } else if (ev.type === 'damage') {
           this.camera.shake(14, 1.0, 0.35);
           this.haptic([35, 30, 50]);
@@ -3114,6 +3948,7 @@ class Game {
 
     this.world.drawTrack(ctx, VIEW.W, VIEW.H);
     this.world.drawCollectibles(ctx);
+    if (this.world.drawCameos) this.world.drawCameos(ctx, this.player);
 
     if (this.state !== 'LOADING') this.player.draw(ctx);
     window.particleSystem.draw(ctx);

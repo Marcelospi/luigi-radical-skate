@@ -176,6 +176,19 @@ class OnlineLeaderboard {
     };
   }
 
+  /** Payload autenticado com UID verificado e nome da conta/família (com fallback para 10 campos). */
+  buildAuthenticatedPayload(entry, serverTimestampFn, user) {
+    const base = this.buildStrictPayload(entry, serverTimestampFn);
+    if (!base) return null;
+    if (!user || !user.uid) return base;
+    const rawAcc = user.displayName || (user.email ? String(user.email).split('@')[0] : '') || base.name;
+    return {
+      ...base,
+      uid: sanitizeText(user.uid, '', 1, 128),
+      accountName: sanitizeText(rawAcc, base.name, 1, 30)
+    };
+  }
+
   _buildDedupKey(item) {
     return [
       String(item.name || '').trim().toLowerCase(),
@@ -209,6 +222,10 @@ class OnlineLeaderboard {
       const d = doc.data() || {};
       const sportId = VALID_SPORTS.includes(d.sportId) ? d.sportId : 'skate';
       const characterId = sanitizeText(d.characterId, 'luigi_3d', 1, 40);
+      const uid = (typeof d.uid === 'string' && d.uid.trim()) ? d.uid.trim().slice(0, 128) : '';
+      const accountName = (typeof d.accountName === 'string' && d.accountName.trim())
+        ? sanitizeText(d.accountName, '', 1, 30)
+        : '';
       const item = {
         id: doc.id,
         name: sanitizeText(d.name, 'Skatista', 1, 24),
@@ -223,6 +240,9 @@ class OnlineLeaderboard {
         sportIcon: sanitizeText(d.sportIcon, SPORT_DEFAULT_ICONS[sportId] || '🛹', 1, 8),
         date: sanitizeText(d.date, '', 0, 20),
         time: sanitizeText(d.time, '', 0, 12),
+        uid,
+        accountName,
+        verified: Boolean(uid),
         isOnline: true
       };
 
@@ -238,16 +258,23 @@ class OnlineLeaderboard {
     return results;
   }
 
-  /** Envia uma pontuação para o Placar Universal Global (imutável, 10 campos exatos, com deduplicação). */
+  /** Envia uma pontuação para o Placar Universal Global (autenticado com fallback clássico de 10 campos). */
   async submitScore(entry) {
     const ready = await this.ensureReady();
     if (!ready) return { ok: false, reason: 'offline' };
 
     const { db, sdk } = ready;
-    const payload = this.buildStrictPayload(entry, sdk.serverTimestamp);
-    if (!payload) return { ok: false, reason: 'invalid_score' };
+    const basePayload = this.buildStrictPayload(entry, sdk.serverTimestamp);
+    if (!basePayload) return { ok: false, reason: 'invalid_score' };
 
-    const dedupKey = this._buildDedupKey(payload);
+    const authUser = (typeof window !== 'undefined' && window.cloudAuth && typeof window.cloudAuth.getCurrentUser === 'function')
+      ? window.cloudAuth.getCurrentUser()
+      : null;
+    const authPayload = (authUser && authUser.uid)
+      ? this.buildAuthenticatedPayload(entry, sdk.serverTimestamp, authUser)
+      : null;
+
+    const dedupKey = this._buildDedupKey(basePayload);
     if (this._submittedKeys.has(dedupKey)) {
       return { ok: true, id: this._submittedKeys.get(dedupKey), deduplicated: true };
     }
@@ -255,20 +282,26 @@ class OnlineLeaderboard {
       return this._inFlightSubmissions.get(dedupKey);
     }
 
-    const addDocPromise = sdk.addDoc(sdk.collection(db, COLLECTION_NAME), payload);
-    // Mesmo se o timeout vencer, registra o sucesso caso o Firestore conclua em seguida para evitar duplicatas no retry
-    addDocPromise.then((docRef) => {
-      if (docRef && docRef.id) {
-        this._submittedKeys.set(dedupKey, docRef.id);
+    const trySubmit = async () => {
+      if (authPayload) {
+        try {
+          return await withTimeout(sdk.addDoc(sdk.collection(db, COLLECTION_NAME), authPayload));
+        } catch (errAuth) {
+          if (errAuth && errAuth.code === 'permission-denied') {
+            return withTimeout(sdk.addDoc(sdk.collection(db, COLLECTION_NAME), basePayload));
+          }
+          throw errAuth;
+        }
       }
-    }).catch(() => {});
+      return withTimeout(sdk.addDoc(sdk.collection(db, COLLECTION_NAME), basePayload));
+    };
 
     const requestPromise = (async () => {
       try {
-        const docRef = await withTimeout(addDocPromise);
+        const docRef = await trySubmit();
         const id = docRef && docRef.id ? docRef.id : null;
         if (id) this._submittedKeys.set(dedupKey, id);
-        return { ok: true, id };
+        return { ok: true, id, verified: Boolean(authPayload) };
       } catch (err) {
         this._lastError = err;
         return { ok: false, reason: (err && err.code) || 'error' };

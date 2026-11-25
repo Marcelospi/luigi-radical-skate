@@ -48,7 +48,8 @@ const sandbox = {
   localStorage: {
     _d: {},
     getItem(k) { return this._d[k] ?? null; },
-    setItem(k, v) { this._d[k] = String(v); }
+    setItem(k, v) { this._d[k] = String(v); },
+    removeItem(k) { delete this._d[k]; }
   },
   requestAnimationFrame: () => {},
   Image: class { set src(v) {} },
@@ -321,8 +322,8 @@ console.log('\n=== 10. Caixa: bate parado, passa com um toque ===');
     for (let i = 0; i < 260; i++) {
       const obs = world.obstacles[0];
       const keys = {};
-      // Um unico toque de 1 passo, disparado tarde de proposito
-      if (jump && !jumped && obs && obs.x - (player.x + player.width) < 46) { keys.Space = true; jumped = true; }
+      // Um unico toque minimo (1 passo), disparado bem proximo da caixa
+      if (jump && !jumped && obs && obs.x - (player.x + player.width) < 4) { keys.Space = true; jumped = true; }
       world.update(player);
       player.update(world, keys);
       if (player.lives < VIDAS_INICIAIS) return 'bateu';
@@ -472,6 +473,10 @@ console.log('\n=== 15. Resgate no abismo devolve o jogador para a pista ===');
     player.isGrinding = false;
     player.isGameOver = false;
     player.lives = VIDAS_INICIAIS;
+    // Evita coincidir o exato frame de virada de fase (+1 vida) no passo da queda proposital
+    const tl = sandbox.getStageTimeline(player.distance + 40);
+    player.currentStageIndex = tl.stageIndex;
+    player._lastMilestoneKey = `${tl.tourLap}:${tl.stageIndex}`;
     step(world, player, {});
     apoiadoNoResgate.push(player.onGround);   // o pouso importa neste instante
     vidasAposResgate.push(player.lives);      // mede custo do resgate imediatamente
@@ -1375,5 +1380,338 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
     audioOk === true, audioErr);
 }
 
-console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
-process.exit(failures === 0 ? 0 : 1);
+// ============================================================
+(async function runGroup33() {
+  console.log('\n=== 33. Pulo curto, inicio calmo sem turbo e edicao/exclusao/restauracao ===');
+
+  // 1) Pulo mais curto (entre 120 e 140px) e velocidade inicial calma (< 5.0)
+  const jumpRun = newRun();
+  let maxJumpH = 0;
+  for (let i = 0; i < 45; i++) {
+    step(jumpRun.world, jumpRun.player, { Space: i < 18 });
+    const h = jumpRun.world.groundY - jumpRun.player.bottom;
+    if (h > maxJumpH) maxJumpH = h;
+  }
+  const inicioCalmo = sandbox.PHYS.BASE_SPEED < 5.0 && maxJumpH >= 120 && maxJumpH <= 140;
+  check('Pulo curto e inicio calmo calibrados', inicioCalmo,
+    `BASE=${sandbox.PHYS.BASE_SPEED} maxJump=${maxJumpH.toFixed(1)}px`);
+
+  // 2) Zero pads 'speed' e zero coletaveis 'turbo' nos primeiros 480m (Facil e Dificil)
+  const prevDiff = sandbox.selectedDifficulty;
+  let earlyTurbos = 0;
+  let earlySpeedPads = 0;
+  try {
+    for (const diff of ['easy', 'hard']) {
+      sandbox.selectedDifficulty = diff;
+      for (let sample = 0; sample < 6; sample++) {
+        const w = new sandbox.GameWorld();
+        const p = new sandbox.Player();
+        p.reset(w);
+        const startX = p.x;
+        while (w.nextChunkX < startX + 4800) {
+          w.generate(w.nextChunkX + 600);
+        }
+        earlySpeedPads += w.ramps.filter(r => r.kind === 'speed' && r.x < startX + 4800).length;
+        earlyTurbos += w.collectibles.filter(c => c.type === 'turbo' && c.x < startX + 4800).length;
+      }
+    }
+  } finally {
+    sandbox.selectedDifficulty = prevDiff;
+  }
+  check('Zero turbo e speed pads antes dos 500m iniciais',
+    earlyTurbos === 0 && earlySpeedPads === 0,
+    `turbos=${earlyTurbos} speedPads=${earlySpeedPads}`);
+
+  // 3) Edicao, exclusao e restauracao de personagens (originais e customizados)
+  const prevCharMgr = sandbox.characterManager;
+  let editOk = false;
+  let deleteBuiltinOk = false;
+  let guardLastOk = false;
+  let restoreOk = false;
+  let charDetail = '';
+
+  try {
+    const CharMgrClass = vm.runInContext('typeof CharacterManager !== "undefined" ? CharacterManager : null', sandbox);
+    let cm;
+    if (CharMgrClass) {
+      cm = new CharMgrClass();
+    } else {
+      load('js/character_manager.js');
+      cm = sandbox.characterManager;
+    }
+    sandbox.characterManager = cm;
+    cm.preloadAllSprites = async () => {};
+    cm.preloadRigParts = async () => {};
+    cm._rawBuiltins = cm._defaultBuiltins();
+    cm.characters = cm._defaultBuiltins().map(c => cm.normalizeCharacter(c));
+    cm.selectedId = 'luigi_3d';
+
+    const edited = await cm.updateCharacter('luigi_3d', null, 'Luigi Turbo', {
+      outfit: 'neon_green',
+      skinTone: 'tan',
+      gender: 'neutral',
+      accessory: 'none',
+      useHelmet: false,
+      headSize: 'large',
+      customizedBody: true
+    });
+    editOk = edited.name === 'Luigi Turbo'
+      && edited.bodyStyle === 'custom'
+      && edited.outfit === 'neon_green'
+      && cm.hasHiddenOrModifiedBuiltins() === true;
+
+    const custom = await cm.createCustomCharacterFromImage(null, 'Amigo Teste', {
+      gender: 'girl',
+      outfit: 'pink_cyan'
+    });
+
+    const del1 = cm.deleteCharacter('luigi_real');
+    const del2 = cm.deleteCharacter('luna_radical');
+    const del3 = cm.deleteCharacter('luigi_3d');
+    deleteBuiltinOk = del1 && del2 && del3
+      && !cm.characters.some(c => c.id === 'luigi_real')
+      && !cm.characters.some(c => c.id === 'luna_radical')
+      && !cm.characters.some(c => c.id === 'luigi_3d');
+
+    // Agora resta apenas 1 desbloqueado (custom) + leo_cosmic bloqueado (750 moedas)
+    const canDelLast = cm.canDeleteCharacter(custom.id);
+    const delLastRes = cm.deleteCharacter(custom.id);
+    guardLastOk = canDelLast === false && delLastRes === false && cm.characters.some(c => c.id === custom.id);
+
+    await cm.restoreBuiltinCharacters();
+    const luigiRestored = cm.getCharacter('luigi_3d');
+    restoreOk = cm.hasHiddenOrModifiedBuiltins() === false
+      && luigiRestored && luigiRestored.name === 'Luigi 3D (SK8-BOY)'
+      && luigiRestored.bodyStyle === 'rig'
+      && cm.characters.some(c => c.id === 'luigi_real')
+      && cm.characters.some(c => c.id === 'luna_radical')
+      && cm.characters.some(c => c.id === custom.id);
+
+    charDetail = `edit=${editOk} del=${deleteBuiltinOk} guard=${guardLastOk} restore=${restoreOk}`;
+  } catch (e) {
+    charDetail = `err=${e && e.message ? e.message : e}`;
+  } finally {
+    sandbox.characterManager = prevCharMgr;
+    sandbox.localStorage.removeItem('luigi_hidden_builtin_chars_v1');
+    sandbox.localStorage.removeItem('luigi_builtin_char_overrides_v1');
+    sandbox.localStorage.removeItem('luigi_custom_characters');
+    sandbox.localStorage.removeItem('luigi_selected_char');
+  }
+
+  check('CharacterManager edita originais, exclui protegendo ultimo e restaura padrao',
+    editOk && deleteBuiltinOk && guardLastOk && restoreOk, charDetail);
+
+  // ============================================================
+  console.log('\n=== 34. Loopings 360, aparicoes raras e novos cenarios (Volta Mundial) ===');
+  {
+    const tlVolcano = sandbox.getStageTimeline(3600);
+    const tlGlacier = sandbox.getStageTimeline(4700);
+    const tlTour2 = sandbox.getStageTimeline(5800);
+    const wBlend = new sandbox.GameWorld();
+    let blendsOk = true;
+    for (let d = 0; d <= 8000; d += 250) {
+      const b = wBlend.getBiomeBlend(d);
+      if (!b || !b.current || !b.next || !Number.isFinite(b.t)) blendsOk = false;
+    }
+    check('6 fases e Volta Mundial infinita funcionam com transicao continua',
+      sandbox.STAGES.length === 6
+      && tlVolcano.stageIndex === 4
+      && tlGlacier.stageIndex === 5
+      && tlTour2.tourLap === 2
+      && tlTour2.stageIndex === 0
+      && blendsOk,
+      `fases=${sandbox.STAGES.length} vol=${tlVolcano.stageIndex} gla=${tlGlacier.stageIndex} volta2=lap${tlTour2.tourLap}/idx${tlTour2.stageIndex}`);
+
+    // Looping 360 completo
+    const loopRun = newRun();
+    loopRun.world._nextCameoDist = 999999;
+    loopRun.world.obstacles.length = 0;
+    loopRun.world.chunkLoop(loopRun.player.x + 260, loopRun.player);
+    let enteredLoop = false;
+    let minPitch = 0;
+    const scoreBefore = loopRun.player.score;
+    for (let i = 0; i < 240; i++) {
+      step(loopRun.world, loopRun.player, {});
+      if (loopRun.player.isInLoop) enteredLoop = true;
+      if (loopRun.player.pitch < minPitch) minPitch = loopRun.player.pitch;
+      if (loopRun.player.loopsCompleted > 0 && i > 45) break;
+    }
+    check('Looping 360 gira de cabeca para baixo, coleta itens e sai com seguranca',
+      enteredLoop && minPitch < -2.8 && loopRun.player.loopsCompleted === 1
+      && loopRun.player.coins >= 4 && loopRun.player.onGround && loopRun.player.lives === VIDAS_INICIAIS
+      && loopRun.player.score > scoreBefore + 300,
+      `entrou=${enteredLoop} minPitch=${minPitch.toFixed(2)} loops=${loopRun.player.loopsCompleted} coins=${loopRun.player.coins} vidas=${loopRun.player.lives}`);
+
+    // Cameos: Cachorro (pula no bote) e Disco Voador (agacha no raio)
+    const dogRun = newRun();
+    dogRun.world._nextCameoDist = 999999;
+    dogRun.world.obstacles.length = 0;
+    const dogCameo = dogRun.world.spawnCameo('dog_chase', dogRun.player);
+    for (let i = 0; i < 220; i++) {
+      const wantJump = dogCameo.timer >= 156 && dogCameo.timer <= 176;
+      step(dogRun.world, dogRun.player, wantJump ? { Space: true } : {});
+      if (dogCameo.outcome === 'dodged') break;
+    }
+    check('Cameo cachorro permite esquivar pulando e recompensa sem tirar vida',
+      dogCameo.outcome === 'dodged' && dogRun.player.lives === VIDAS_INICIAIS,
+      `outcome=${dogCameo.outcome} vidas=${dogRun.player.lives}`);
+
+    const ufoRun = newRun();
+    ufoRun.world._nextCameoDist = 999999;
+    ufoRun.world.obstacles.length = 0;
+    const ufoCameo = ufoRun.world.spawnCameo('ufo_beam', ufoRun.player);
+    for (let i = 0; i < 260; i++) {
+      const wantDuck = ufoCameo.phase === 'beam' || ufoCameo.phase === 'warn';
+      step(ufoRun.world, ufoRun.player, wantDuck ? { ArrowDown: true } : {});
+      if (ufoCameo.outcome === 'dodged') break;
+    }
+    check('Cameo disco voador permite passar agachado sob o raio sem tirar vida',
+      ufoCameo.outcome === 'dodged' && ufoRun.player.lives === VIDAS_INICIAIS,
+      `outcome=${ufoCameo.outcome} vidas=${ufoRun.player.lives}`);
+
+    // Renderizacao sem NaN nos novos biomas, loops, obstaculos e todos os 6 cameos
+    let nanCalls = 0;
+    let renderAllOk = true;
+    const spyCtx = new Proxy(mockCtx(), {
+      get(target, prop) {
+        const val = target[prop];
+        if (typeof val === 'function') {
+          return (...args) => {
+            for (const a of args) {
+              if (typeof a === 'number' && !Number.isFinite(a)) nanCalls++;
+            }
+            return val.apply(target, args);
+          };
+        }
+        return val;
+      }
+    });
+    try {
+      const { world, player } = newRun();
+      for (const distVal of [3800, 4900, 5800]) {
+        player.distance = distVal;
+        world.playerDistance = distVal;
+        world.drawBackground(spyCtx, 1280, 720, 0);
+        world.drawForeground(spyCtx, 1280, 720, 0.9);
+      }
+      world.chunkLoop(420, player);
+      world.obstacles.push(
+        { type: 'lava_rock', x: 300, y: world.groundY - 56, width: 56, height: 56, hit: false },
+        { type: 'ice_crystal', x: 600, y: world.groundY - 60, width: 54, height: 60, hit: false }
+      );
+      for (const cType of ['dog_chase', 'police_chase', 'ufo_beam', 'shark_leap', 'lava_meteor', 'penguin_slide']) {
+        world.spawnCameo(cType, player);
+      }
+      world.drawTrack(spyCtx, 1280, 720);
+      world.drawCameos(spyCtx, player);
+    } catch (_) {
+      renderAllOk = false;
+    }
+    check('Novos biomas, loops, obstaculos e 6 cameos renderizam sem erros nem NaN',
+      renderAllOk && nanCalls === 0, `nanCalls=${nanCalls}`);
+  }
+
+  // ============================================================
+  console.log('\n=== 35. Perfis independentes por personagem, Closet (ativar/desativar) e sync Nuvem ===');
+  {
+    const prevPm = sandbox.progressionManager;
+    sandbox.localStorage.removeItem('luigi_skate_progression_v1');
+    sandbox.localStorage.removeItem('luigi_skate_progression_v2');
+    sandbox.localStorage.removeItem('luigi_skate_high_score');
+    sandbox.localStorage.removeItem('luigi_selected_char');
+
+    const pmMulti = new sandbox.ProgressionManager();
+    sandbox.progressionManager = pmMulti;
+
+    // 35a. Luigi conquista moedas, compra Cyber Neon, melhora Ima, abre Fase 4 e grava recorde
+    pmMulti.setActiveProfile('luigi_3d');
+    pmMulti.addCoins(500);
+    pmMulti.buyItem('gear', 'neon');
+    pmMulti.buyUpgrade('magnet');
+    pmMulti.unlockStage(3);
+    pmMulti.recordHighScore(15000, 'classic');
+    const luigiCoinsSnap = pmMulti.getCoins();
+
+    // 35b. Luna Radical entra limpa e independente (50 moedas, fase 0, recorde 0, sem Cyber Neon)
+    pmMulti.setActiveProfile('luna_radical');
+    const lunaIsolada = pmMulti.getCoins() === 50
+      && pmMulti.getUnlockedStageIndex() === 0
+      && pmMulti.getHighScore('classic') === 0
+      && pmMulti.isOwned('gear', 'neon') === false
+      && pmMulti.getEquippedAccessory() === 'shades';
+
+    // 35c. Toggle desativa o oculos da Luna e Player.getActiveAccessory respeita 'none'
+    const togAccOff = pmMulti.toggleEquipItem('accessories', 'shades');
+    const dummyPlayer = new sandbox.Player();
+    const lunaAccDesativado = togAccOff.ok
+      && togAccOff.activeId === 'none'
+      && dummyPlayer.getActiveAccessory({ id: 'luna_radical', accessory: 'shades' }) === 'none';
+
+    const togAccOn = pmMulti.toggleEquipItem('accessories', 'shades');
+    const lunaAccReativado = togAccOn.ok && dummyPlayer.getActiveAccessory({ id: 'luna_radical', accessory: 'shades' }) === 'shades';
+
+    // 35d. Volta para Luigi: tudo intacto + toggle desativa pintura Neon e poder Ima sem apagar compra
+    pmMulti.setActiveProfile('luigi_3d');
+    const luigiRestaurado = pmMulti.getCoins() === luigiCoinsSnap
+      && pmMulti.getHighScore('classic') === 15000
+      && pmMulti.getUnlockedStageIndex() === 3
+      && pmMulti.getEquippedGearTheme().id === 'neon';
+
+    const togGearOff = pmMulti.toggleEquipItem('gear', 'neon');
+    const togUpgOff = pmMulti.toggleUpgradeEnabled('magnet');
+    const closetTogglesOk = togGearOff.ok
+      && pmMulti.getEquippedGearTheme().id === 'classic'
+      && pmMulti.isOwned('gear', 'neon') === true
+      && togUpgOff.ok && togUpgOff.enabled === false
+      && pmMulti.getUpgradeLevel('magnet') === 1
+      && pmMulti.getEffectiveUpgradeLevel('magnet') === 0
+      && pmMulti.getUpgradeBonus('magnet') === 0;
+
+    // 35e. Exportacao e merge da nuvem preserva maiores recordes e une compras sem NaN
+    const exportedLuigi = pmMulti.exportProfileForCloud('luigi_3d');
+    pmMulti.importOrMergeCloudData(
+      { activeProfileId: 'luigi_3d', unlockedCharacters: ['luigi_3d', 'luigi_real', 'luna_radical', 'leo_cosmic'] },
+      {
+        luigi_3d: {
+          ...exportedLuigi,
+          highScore: 22500,
+          unlockedStageIndex: 4,
+          owned: {
+            ...exportedLuigi.owned,
+            trails: ['classic', 'rainbow']
+          },
+          clientUpdatedAt: Date.now() + 5000
+        }
+      },
+      'uid_teste_familia'
+    );
+    const mergeOk = pmMulti.getHighScore('classic') === 22500
+      && pmMulti.getUnlockedStageIndex() === 4
+      && pmMulti.isOwned('trails', 'rainbow') === true
+      && pmMulti.isOwned('gear', 'neon') === true
+      && pmMulti.isOwned('characters', 'leo_cosmic') === true
+      && Number.isFinite(pmMulti.getCoins());
+
+    sandbox.progressionManager = prevPm;
+    sandbox.localStorage.removeItem('luigi_skate_progression_v1');
+    sandbox.localStorage.removeItem('luigi_skate_progression_v2');
+    sandbox.localStorage.removeItem('luigi_skate_high_score');
+    sandbox.localStorage.removeItem('luigi_selected_char');
+
+    check('Perfis sao 100% isolados por personagem (moedas, compras, fase e recordes)',
+      lunaIsolada && luigiRestaurado,
+      `lunaIsolada=${lunaIsolada} luigiRestaurado=${luigiRestaurado}`);
+    check('Closet ativa e desativa acessorios, pinturas e poderes sem perder compras',
+      lunaAccDesativado && lunaAccReativado && closetTogglesOk,
+      `off=${lunaAccDesativado} on=${lunaAccReativado} gearUpg=${closetTogglesOk}`);
+    check('Exportacao e merge de perfil na nuvem preservam recordes e itens sem NaN',
+      mergeOk,
+      `high=${pmMulti.getHighScore('classic')} unlocked=${pmMulti.isOwned('characters', 'leo_cosmic')}`);
+  }
+
+  console.log(`\n${failures === 0 ? 'TODOS OS TESTES PASSARAM' : failures + ' TESTE(S) FALHARAM'}`);
+  process.exit(failures === 0 ? 0 : 1);
+})().catch((err) => {
+  console.error('Erro inesperado na suite:', err);
+  process.exit(1);
+});

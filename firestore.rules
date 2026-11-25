@@ -1,32 +1,69 @@
 rules_version = '2';
 
 // ===============================================================
-// Assumed Data Model
+// Modelo de Dados Assumido (Assumed Data Model)
 // ===============================================================
 //
-// Este arquivo de regras de segurança assume a seguinte estrutura
-// para o Placar Universal público do jogo "Luigi Radical Skate":
+// Este arquivo de regras de segurança define o modelo de dados
+// do jogo "Luigi Radical Skate" no Cloud Firestore:
 //
-// Collection: leaderboard
-// Document ID: {entryId} (auto-gerado pelo Firestore)
-// Acesso: Público sem autenticação obrigatória (jogo infantil/casual),
-//         com escrita somente de criação (imutável) e leitura limitada.
-// Fields (todos obrigatórios, nenhum campo extra permitido):
-//   - name: string (required, 1..24 chars) - Apelido do jogador
-//   - score: int (required, 1..9999999) - Pontuação final da partida
-//   - distance: int (required, 0..999999) - Distância percorrida
-//   - characterId: string (required, 1..40 chars) - ID do personagem
-//   - characterName: string (required, 1..30 chars) - Nome do personagem
-//   - sportId: string (required, enum: 'skate' | 'bmx' | 'scooter' | 'skates') - Modalidade
-//   - sportIcon: string (required, 1..8 chars) - Emoji/ícone do esporte
-//   - date: string (required, 4..20 chars) - Data formatada da partida
-//   - time: string (required, 4..12 chars) - Hora formatada da partida
-//   - createdAt: timestamp (required, == request.time) - Timestamp do servidor
+// 1. Collection: leaderboard
+//    Document ID: {entryId} (auto-gerado pelo Firestore)
+//    Acesso: Leitura pública limitada (`get` livre; `list` com `limit <= 100`).
+//            Criação pública (visitante com 10 campos) ou autenticada
+//            (12 campos incluindo `uid` e `accountName`), 100% imutável.
+//    Campos obrigatórios (10):
+//      - name: string (1..24 chars) - Apelido do jogador
+//      - score: int (1..9999999) - Pontuação final da partida
+//      - distance: int (0..999999) - Distância percorrida
+//      - characterId: string (1..40 chars) - ID do personagem
+//      - characterName: string (1..30 chars) - Nome do personagem
+//      - sportId: string ('skate' | 'bmx' | 'scooter' | 'skates') - Modalidade
+//      - sportIcon: string (1..8 chars) - Emoji/ícone do esporte
+//      - date: string (4..20 chars) - Data formatada da partida
+//      - time: string (4..12 chars) - Hora formatada da partida
+//      - createdAt: timestamp (== request.time) - Timestamp do servidor
+//    Campos opcionais autenticados (ambos obrigatórios juntos quando enviados):
+//      - uid: string (== request.auth.uid, <= 128 chars) - UID verificado
+//      - accountName: string (1..30 chars) - Nome da conta/família
 //
-// Observação sobre queries:
-//   - Consultas de listagem (`list`) exigem `limit(N)` com `1 <= N <= 100`
-//     (ex.: `orderBy('score', 'desc'), limit(50)`) para evitar scraping
-//     e proteger a cota de leituras.
+// 2. Collection: users
+//    Document ID: {uid} (UID do Firebase Auth)
+//    Acesso: Exclusivo ao próprio dono autenticado (`request.auth.uid == uid`).
+//            Contém PII (`email`), portanto leitura/listagem pública é proibida.
+//            Deleção desabilitada.
+//    Campos (todos obrigatórios, sem campos extras):
+//      - displayName: string (1..40 chars) - Nome de exibição da conta
+//      - email: string (0..120 chars) - E-mail da conta (PII)
+//      - unlockedCharacters: list (<= 30 itens) - IDs de personagens liberados
+//      - hiddenBuiltins: list (<= 10 itens) - IDs de personagens padrão ocultos
+//      - activeProfileId: string (1..48 chars) - Perfil ativo selecionado
+//      - updatedAt: timestamp (== request.time) - Timestamp do servidor
+//
+// 3. Subcollection: users/{uid}/profiles
+//    Document ID: {profileId} (ID do personagem/perfil independente)
+//    Acesso: Exclusivo ao próprio dono autenticado (`request.auth.uid == uid`).
+//            `list` exige `limit` entre 1 e 50. Permite `create`, `update` e `delete`.
+//    Campos (todos obrigatórios, sem campos extras):
+//      - profileId: string (1..48 chars, == {profileId}) - ID do perfil
+//      - coinsBank: int (0..99999999) - Saldo de moedas do personagem
+//      - rankLevel: int (1..999) - Nível de patente
+//      - missionsCompletedTotal: int (0..999999) - Total de missões concluídas
+//      - unlockedStageIndex: int (0..5) - Maior fase desbloqueada
+//      - highScore: int (0..99999999) - Recorde modo livre
+//      - highScoreTime60: int (0..99999999) - Recorde modo 60s
+//      - preferredSport: string ('skate' | 'bmx' | 'scooter' | 'skates')
+//      - owned: map { gear, trails, accessories, characters } (listas <= 30)
+//      - equipped: map { gear (1..32), trail (1..32), accessory (1..32), disabledUpgrades (list <= 8) }
+//      - upgrades: map { magnet, turbo, fever, coinBonus } (ints 0..4)
+//      - activeMissions: list (<= 3 itens) - Missões ativas do perfil
+//      - achievements: map (<= 30 chaves) - Conquistas desbloqueadas
+//      - stats: map (10 contadores inteiros >= 0)
+//      - clientUpdatedAt: int (>= 1) - Timestamp local do cliente
+//      - isCustom: bool - Se é personagem customizado pelo usuário
+//      - isBuiltinOverride: bool - Se é personalização de personagem padrão
+//      - charMeta: map (name: 1..32 chars; headThumb opcional <= 80000 chars)
+//      - updatedAt: timestamp (== request.time) - Timestamp do servidor
 //
 // ===============================================================
 
@@ -34,39 +71,66 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ===============================================================
-    // Helper Functions
+    // Funções Auxiliares (Helper Functions)
     // ===============================================================
 
+    // Verifica se a requisição possui usuário autenticado no Firebase Auth
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Verifica se o usuário autenticado é o dono do recurso pelo UID do caminho
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Garante que o documento não contém campos além dos permitidos
     function hasOnlyAllowedFields(fields) {
       return request.resource.data.keys().hasOnly(fields);
     }
 
+    // Garante que todos os campos obrigatórios estão presentes no documento
     function hasRequiredFields(fields) {
       return request.resource.data.keys().hasAll(fields);
     }
 
+    // Valida string com tamanho mínimo e máximo (proteção contra strings vazias ou de 1MB)
     function isValidString(val, minLen, maxLen) {
       return val is string && val.size() >= minLen && val.size() <= maxLen;
     }
 
+    // Valida número inteiro dentro de um intervalo fechado [minVal, maxVal]
     function isValidIntRange(val, minVal, maxVal) {
       return val is int && val >= minVal && val <= maxVal;
     }
 
+    // Valida número inteiro não negativo (>= 0)
+    function isNonNegativeInt(val) {
+      return val is int && val >= 0;
+    }
+
+    // Valida modalidade esportiva aceita pelo jogo
     function isValidSportId(val) {
       return val is string && val in ['skate', 'bmx', 'scooter', 'skates'];
     }
 
+    // Garante que o campo de data/hora foi preenchido com serverTimestamp()
     function isServerTimestamp(val) {
       return val is timestamp && val == request.time;
     }
 
+    // Valida lista com limite máximo de elementos (proteção contra abuso de armazenamento)
+    function isValidList(val, maxSize) {
+      return val is list && val.size() <= maxSize;
+    }
+
     // ===============================================================
-    // Domain Validators
+    // Validadores de Domínio (Domain Validators)
     // ===============================================================
 
+    // Valida entrada do Placar Universal (10 campos base ou 12 campos com conta autenticada)
     function isValidLeaderboardEntry(data) {
-      let allowedFields = [
+      let baseFields = [
         'name',
         'score',
         'distance',
@@ -78,9 +142,32 @@ service cloud.firestore {
         'time',
         'createdAt'
       ];
+      let authFields = [
+        'name',
+        'score',
+        'distance',
+        'characterId',
+        'characterName',
+        'sportId',
+        'sportIcon',
+        'date',
+        'time',
+        'createdAt',
+        'uid',
+        'accountName'
+      ];
+      let hasAuthMeta = ('uid' in data) || ('accountName' in data);
+      let validAuthMeta = !hasAuthMeta || (
+        isAuthenticated() &&
+        data.keys().hasAll(['uid', 'accountName']) &&
+        data.uid is string &&
+        data.uid == request.auth.uid &&
+        data.uid.size() <= 128 &&
+        isValidString(data.accountName, 1, 30)
+      );
 
-      return hasOnlyAllowedFields(allowedFields) &&
-             hasRequiredFields(allowedFields) &&
+      return hasOnlyAllowedFields(authFields) &&
+             hasRequiredFields(baseFields) &&
              isValidString(data.name, 1, 24) &&
              isValidIntRange(data.score, 1, 9999999) &&
              isValidIntRange(data.distance, 0, 999999) &&
@@ -90,13 +177,190 @@ service cloud.firestore {
              isValidString(data.sportIcon, 1, 8) &&
              isValidString(data.date, 4, 20) &&
              isValidString(data.time, 4, 12) &&
-             isServerTimestamp(data.createdAt);
+             isServerTimestamp(data.createdAt) &&
+             validAuthMeta;
+    }
+
+    // Valida documento raiz da conta/família em /users/{uid}
+    function isValidUserAccountDoc(data) {
+      let allowedFields = [
+        'displayName',
+        'email',
+        'unlockedCharacters',
+        'hiddenBuiltins',
+        'activeProfileId',
+        'updatedAt'
+      ];
+
+      return hasOnlyAllowedFields(allowedFields) &&
+             hasRequiredFields(allowedFields) &&
+             isValidString(data.displayName, 1, 40) &&
+             data.email is string &&
+             data.email.size() <= 120 &&
+             isValidList(data.unlockedCharacters, 30) &&
+             isValidList(data.hiddenBuiltins, 10) &&
+             isValidString(data.activeProfileId, 1, 48) &&
+             isServerTimestamp(data.updatedAt);
+    }
+
+    // Valida mapa de itens possuídos (`owned`) de um perfil
+    function isValidProfileOwned(owned) {
+      let keys = ['gear', 'trails', 'accessories', 'characters'];
+      return owned is map &&
+             owned.keys().hasAll(keys) &&
+             owned.keys().hasOnly(keys) &&
+             isValidList(owned.gear, 30) &&
+             isValidList(owned.trails, 30) &&
+             isValidList(owned.accessories, 30) &&
+             isValidList(owned.characters, 30);
+    }
+
+    // Valida mapa de itens equipados (`equipped`) de um perfil
+    function isValidProfileEquipped(equipped) {
+      let keys = ['gear', 'trail', 'accessory', 'disabledUpgrades'];
+      return equipped is map &&
+             equipped.keys().hasAll(keys) &&
+             equipped.keys().hasOnly(keys) &&
+             isValidString(equipped.gear, 1, 32) &&
+             isValidString(equipped.trail, 1, 32) &&
+             isValidString(equipped.accessory, 1, 32) &&
+             isValidList(equipped.disabledUpgrades, 8);
+    }
+
+    // Valida mapa de melhorias (`upgrades`) de um perfil (níveis de 0 a 4)
+    function isValidProfileUpgrades(upgrades) {
+      let keys = ['magnet', 'turbo', 'fever', 'coinBonus'];
+      return upgrades is map &&
+             upgrades.keys().hasOnly(keys) &&
+             upgrades.keys().hasAll(keys) &&
+             isValidIntRange(upgrades.magnet, 0, 4) &&
+             isValidIntRange(upgrades.turbo, 0, 4) &&
+             isValidIntRange(upgrades.fever, 0, 4) &&
+             isValidIntRange(upgrades.coinBonus, 0, 4);
+    }
+
+    // Valida mapa de estatísticas (`stats`) de um perfil
+    function isValidProfileStats(stats) {
+      let keys = [
+        'totalRuns',
+        'totalCoins',
+        'totalTricks',
+        'totalGrinds',
+        'totalSmashes',
+        'totalNearMiss',
+        'totalWords',
+        'totalLoops',
+        'bestCombo',
+        'bestDistance'
+      ];
+      return stats is map &&
+             stats.keys().hasAll(keys) &&
+             stats.keys().hasOnly(keys) &&
+             isNonNegativeInt(stats.totalRuns) &&
+             isNonNegativeInt(stats.totalCoins) &&
+             isNonNegativeInt(stats.totalTricks) &&
+             isNonNegativeInt(stats.totalGrinds) &&
+             isNonNegativeInt(stats.totalSmashes) &&
+             isNonNegativeInt(stats.totalNearMiss) &&
+             isNonNegativeInt(stats.totalWords) &&
+             isNonNegativeInt(stats.totalLoops) &&
+             isNonNegativeInt(stats.bestCombo) &&
+             isNonNegativeInt(stats.bestDistance);
+    }
+
+    // Valida metadados visuais do personagem (`charMeta`) com proteção de tamanho contra DoS
+    function isValidProfileCharMeta(charMeta) {
+      let allowedKeys = [
+        'id',
+        'name',
+        'badge',
+        'description',
+        'bodyStyle',
+        'fullPhoto',
+        'useHelmet',
+        'hasPhoto',
+        'gender',
+        'skinTone',
+        'outfit',
+        'hairColor',
+        'accessory',
+        'headSize',
+        'headThumb',
+        'stats'
+      ];
+      return charMeta is map &&
+             charMeta.keys().hasOnly(allowedKeys) &&
+             isValidString(charMeta.name, 1, 32) &&
+             (!('id' in charMeta.keys()) || isValidString(charMeta.id, 1, 48)) &&
+             (!('badge' in charMeta.keys()) || (charMeta.badge is string && charMeta.badge.size() <= 80)) &&
+             (!('description' in charMeta.keys()) || (charMeta.description is string && charMeta.description.size() <= 300)) &&
+             (!('bodyStyle' in charMeta.keys()) || isValidString(charMeta.bodyStyle, 1, 24)) &&
+             (!('fullPhoto' in charMeta.keys()) || charMeta.fullPhoto is bool) &&
+             (!('useHelmet' in charMeta.keys()) || charMeta.useHelmet is bool) &&
+             (!('hasPhoto' in charMeta.keys()) || charMeta.hasPhoto is bool) &&
+             (!('gender' in charMeta.keys()) || isValidString(charMeta.gender, 1, 16)) &&
+             (!('skinTone' in charMeta.keys()) || isValidString(charMeta.skinTone, 1, 24)) &&
+             (!('outfit' in charMeta.keys()) || isValidString(charMeta.outfit, 1, 32)) &&
+             (!('hairColor' in charMeta.keys()) || isValidString(charMeta.hairColor, 1, 24)) &&
+             (!('accessory' in charMeta.keys()) || isValidString(charMeta.accessory, 1, 32)) &&
+             (!('headSize' in charMeta.keys()) || isValidString(charMeta.headSize, 1, 16)) &&
+             (!('headThumb' in charMeta.keys()) || (charMeta.headThumb is string && charMeta.headThumb.size() <= 80000)) &&
+             (!('stats' in charMeta.keys()) || (charMeta.stats is map && charMeta.stats.keys().size() <= 6));
+    }
+
+    // Valida documento completo de perfil independente em /users/{uid}/profiles/{profileId}
+    function isValidProfileDoc(data, profileId) {
+      let allowedFields = [
+        'profileId',
+        'coinsBank',
+        'rankLevel',
+        'missionsCompletedTotal',
+        'unlockedStageIndex',
+        'highScore',
+        'highScoreTime60',
+        'preferredSport',
+        'owned',
+        'equipped',
+        'upgrades',
+        'activeMissions',
+        'achievements',
+        'stats',
+        'clientUpdatedAt',
+        'isCustom',
+        'isBuiltinOverride',
+        'charMeta',
+        'updatedAt'
+      ];
+
+      return hasOnlyAllowedFields(allowedFields) &&
+             hasRequiredFields(allowedFields) &&
+             isValidString(data.profileId, 1, 48) &&
+             data.profileId == profileId &&
+             isValidIntRange(data.coinsBank, 0, 99999999) &&
+             isValidIntRange(data.rankLevel, 1, 999) &&
+             isValidIntRange(data.missionsCompletedTotal, 0, 999999) &&
+             isValidIntRange(data.unlockedStageIndex, 0, 5) &&
+             isValidIntRange(data.highScore, 0, 99999999) &&
+             isValidIntRange(data.highScoreTime60, 0, 99999999) &&
+             isValidSportId(data.preferredSport) &&
+             isValidProfileOwned(data.owned) &&
+             isValidProfileEquipped(data.equipped) &&
+             isValidProfileUpgrades(data.upgrades) &&
+             isValidList(data.activeMissions, 3) &&
+             data.achievements is map && data.achievements.keys().size() <= 30 &&
+             isValidProfileStats(data.stats) &&
+             data.clientUpdatedAt is int && data.clientUpdatedAt >= 1 &&
+             data.isCustom is bool &&
+             data.isBuiltinOverride is bool &&
+             isValidProfileCharMeta(data.charMeta) &&
+             isServerTimestamp(data.updatedAt);
     }
 
     // ===============================================================
-    // Collection Rules
+    // Regras das Coleções (Collection Rules)
     // ===============================================================
 
+    // 1. Placar Universal Global
     match /leaderboard/{entryId} {
       // Leitura individual permitida publicamente (sem PII no documento)
       allow get: if true;
@@ -107,16 +371,45 @@ service cloud.firestore {
                      request.query.limit > 0 &&
                      request.query.limit <= 100;
 
-      // Criação pública com validação estrita de schema, tipos, limites
-      // e timestamp do servidor (serverTimestamp())
+      // Criação pública (10 campos) ou autenticada (12 campos com uid == request.auth.uid)
       allow create: if isValidLeaderboardEntry(request.resource.data);
 
       // Placar 100% imutável: ninguém pode alterar ou apagar recordes
       allow update, delete: if false;
     }
 
+    // 2. Documento raiz da conta/família (acesso restrito exclusivamente ao dono)
+    match /users/{uid} {
+      // Leitura exclusiva do dono (protege PII como e-mail contra acesso de terceiros)
+      allow get: if isOwner(uid);
+
+      // Criação e atualização exclusivas do dono com validação estrita de schema
+      allow create, update: if isOwner(uid) && isValidUserAccountDoc(request.resource.data);
+
+      // Conta raiz não pode ser apagada diretamente pelo cliente
+      allow delete: if false;
+
+      // 3. Subcoleção de perfis independentes por personagem
+      match /profiles/{profileId} {
+        // Leitura individual exclusiva do dono
+        allow get: if isOwner(uid);
+
+        // Listagem exclusiva do dono com limite máximo de 50 perfis por consulta
+        allow list: if isOwner(uid) &&
+                       request.query.limit is int &&
+                       request.query.limit > 0 &&
+                       request.query.limit <= 50;
+
+        // Criação e atualização exclusivas do dono com validação completa em ambos os casos
+        allow create, update: if isOwner(uid) && isValidProfileDoc(request.resource.data, profileId);
+
+        // Permite ao dono remover perfis customizados excluídos no jogo
+        allow delete: if isOwner(uid);
+      }
+    }
+
     // ===============================================================
-    // Default Deny (Catch-all)
+    // Negação Padrão (Default Deny Catch-all)
     // ===============================================================
 
     // Bloqueia qualquer outra coleção ou subcoleção não declarada

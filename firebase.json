@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Luigi Radical Skate",
+        "supportEmail": "marcelo.spi01@gmail.com",
+        "authorizedRedirectUris": [
+          "https://luigi-radical-skate.firebaseapp.com/__/auth/handler"
+        ]
+      }
+    }
+  },
   "firestore": {
     "rules": "firestore.rules"
   },

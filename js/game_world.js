@@ -89,7 +89,7 @@ const BIOMES = [
     id: 'cosmic',
     name: 'Pista Cósmica das Estrelas',
     minDist: 2400,
-    maxDist: Infinity,
+    maxDist: 3500,
     sky: ['#000105', '#050417', '#10092b', '#220e47', '#3b0c6b', '#5b1e8c'],
     orbColor: ['#f5f3ff', '#c084fc', '#6d28d9'],
     orbHalo: [168, 85, 247, 0.46],
@@ -104,6 +104,46 @@ const BIOMES = [
     starAlpha: 1.0,
     cloudColor: [76, 29, 149, 0.24],
     cloudRim: [192, 132, 252, 0.30]
+  },
+  {
+    id: 'volcano',
+    name: 'Vulcão Magma Radical',
+    minDist: 3500,
+    maxDist: 4600,
+    sky: ['#090205', '#1d050a', '#430d12', '#7c1a15', '#b93815', '#fb923c'],
+    orbColor: ['#fff7ed', '#fdba74', '#ea580c'],
+    orbHalo: [249, 115, 22, 0.46],
+    orbStyle: 'volcanoSun',
+    edgeColor: '#f97316',
+    roadColor1: '#301618',
+    roadColor2: '#200d10',
+    roadColor3: '#120608',
+    hazeColor: [180, 52, 22, 0.40],
+    ambientColor: '#f97316',
+    rimColor: '#fde047',
+    starAlpha: 0.25,
+    cloudColor: [42, 16, 18, 0.56],
+    cloudRim: [251, 146, 60, 0.42]
+  },
+  {
+    id: 'glacier',
+    name: 'Geleira Aurora Boreal',
+    minDist: 4600,
+    maxDist: 5700,
+    sky: ['#020817', '#061830', '#0c2d4d', '#11486b', '#166f8f', '#67e8f9'],
+    orbColor: ['#f0f9ff', '#bae6fd', '#38bdf8'],
+    orbHalo: [56, 189, 248, 0.44],
+    orbStyle: 'iceOrb',
+    edgeColor: '#38bdf8',
+    roadColor1: '#154e63',
+    roadColor2: '#0d3647',
+    roadColor3: '#071f2b',
+    hazeColor: [56, 189, 248, 0.34],
+    ambientColor: '#38bdf8',
+    rimColor: '#a5f3fc',
+    starAlpha: 0.65,
+    cloudColor: [207, 250, 254, 0.34],
+    cloudRim: [165, 243, 252, 0.55]
   }
 ];
 
@@ -168,12 +208,26 @@ class GameWorld {
     return arr;
   }
 
-  getBiome(dist) {
-    const d = dist !== undefined ? dist : this.playerDistance;
-    for (let i = BIOMES.length - 1; i >= 0; i--) {
-      if (d >= BIOMES[i].minDist) return BIOMES[i];
+  _resolveTimeline(dist) {
+    const d = Math.max(0, dist !== undefined ? dist : this.playerDistance);
+    if (typeof window !== 'undefined' && typeof window.getStageTimeline === 'function') {
+      return window.getStageTimeline(d);
     }
-    return BIOMES[0];
+    let idx = 0;
+    for (let i = BIOMES.length - 1; i >= 0; i--) {
+      if (d >= BIOMES[i].minDist) { idx = i; break; }
+    }
+    return {
+      stageIndex: idx,
+      nextStageIndex: (idx + 1) % BIOMES.length,
+      segEnd: BIOMES[idx].maxDist,
+      tourLap: 1
+    };
+  }
+
+  getBiome(dist) {
+    const tl = this._resolveTimeline(dist);
+    return BIOMES[tl.stageIndex] || BIOMES[0];
   }
 
   /**
@@ -181,20 +235,14 @@ class GameWorld {
    * Contrato compartilhado com física/personagem/HUD.
    */
   getBiomeBlend(dist) {
-    const d = dist !== undefined ? dist : this.playerDistance;
-    let idx = 0;
-    for (let i = BIOMES.length - 1; i >= 0; i--) {
-      if (d >= BIOMES[i].minDist) {
-        idx = i;
-        break;
-      }
-    }
-    const current = BIOMES[idx];
-    const next = BIOMES[Math.min(BIOMES.length - 1, idx + 1)];
+    const d = Math.max(0, dist !== undefined ? dist : this.playerDistance);
+    const tl = this._resolveTimeline(d);
+    const current = BIOMES[tl.stageIndex] || BIOMES[0];
+    const next = BIOMES[tl.nextStageIndex] || current;
 
     let t = 0;
-    if (current !== next && isFinite(current.maxDist)) {
-      const startBlend = current.maxDist - BIOME_TRANSITION_DIST;
+    if (current !== next && isFinite(tl.segEnd)) {
+      const startBlend = tl.segEnd - BIOME_TRANSITION_DIST;
       if (d > startBlend) {
         t = smoothstep((d - startBlend) / BIOME_TRANSITION_DIST);
       }
@@ -212,7 +260,7 @@ class GameWorld {
 
   /**
    * Identifica o tipo de superfície sob a coordenada X (para áudio e partículas).
-   * Contrato compartilhado: 'asphalt' | 'wood' | 'metal' | 'cosmic' | 'breakable'.
+   * Contrato compartilhado: 'asphalt' | 'wood' | 'metal' | 'cosmic' | 'ice' | 'breakable'.
    */
   getSurfaceAt(x) {
     for (const p of this.platforms) {
@@ -221,6 +269,7 @@ class GameWorld {
         const biomeId = this.getBiome().id;
         if (biomeId === 'beach') return 'wood';
         if (biomeId === 'cosmic') return 'cosmic';
+        if (biomeId === 'glacier') return 'ice';
         return 'asphalt';
       }
     }
@@ -236,8 +285,10 @@ class GameWorld {
     this.pads = [];
     this.ramps = [];
     this.rails = [];
+    this.loops = [];
     this.obstacles = [];
     this.collectibles = [];
+    this.cameos = [];
 
     this.scroll = 0;
     this.time = 0;
@@ -246,6 +297,9 @@ class GameWorld {
     this._playerTurbo = false;
     this._meteors = [];
     this._letterCounter = 0;
+    this._chunksSinceLoop = 0;
+    this._nextCameoDist = 520 + Math.random() * 160;
+    this._lastCameoType = '';
 
     this.recordDistance = Math.max(0, Math.floor(opts.recordDistance || 0));
     this.recordPassed = false;
@@ -336,7 +390,7 @@ class GameWorld {
   // ==========================================================
 
   update(player) {
-    const speed = player.speed;
+    const speed = player.isInLoop ? 0 : player.speed;
     this.scroll += speed;
     this.time++;
     this.playerDistance = player.distance || 0;
@@ -347,11 +401,260 @@ class GameWorld {
     this.updatePads(speed, player);
     this.updateRamps(speed);
     this.updateRails(speed);
+    this.updateLoops(speed);
     this.updateObstacles(speed, player);
     this.updateCollectibles(speed, player);
+    this.updateCameos(speed, player);
     this.updateRecordFlag(player);
     this.updateAmbient(speed);
     this.generate(player);
+  }
+
+  updateLoops(speed) {
+    if (!Array.isArray(this.loops)) return;
+    for (let i = this.loops.length - 1; i >= 0; i--) {
+      const lp = this.loops[i];
+      lp.x = lp.cx - lp.radius;
+      lp.cx -= speed;
+      lp.glowPhase = (lp.glowPhase || 0) + 0.09;
+      if (lp.cx + lp.radius < -320) this.loops.splice(i, 1);
+    }
+  }
+
+  _awardCameoDodge(player, label, pts, x, y, coins = 0, fever = 18) {
+    const scored = player.addScore ? player.addScore(pts) : pts;
+    if (!player.addScore) player.score += scored;
+    if (coins > 0) {
+      player.coins += coins;
+      player.notifyProgress?.('coin', coins);
+    }
+    player.addFever?.(fever);
+    if (window.soundSystem && window.soundSystem.playNearMiss) window.soundSystem.playNearMiss();
+    if (window.particleSystem) {
+      window.particleSystem.emitSparks?.(x, y, 16, '#fbbf24');
+      window.particleSystem.addFloatingText?.(`${label} +${scored}`, x, y, '#fbbf24', 22);
+    }
+  }
+
+  spawnCameo(type, player) {
+    const basePx = player ? player.x : 190;
+    const gY = this.groundY;
+    let cameo = null;
+    if (type === 'dog_chase') {
+      cameo = { type, x: -110, y: gY - 40, width: 58, height: 38, timer: 0, phase: 'chase', resolved: false, outcome: null, barkText: 'AU! AU!' };
+    } else if (type === 'police_chase') {
+      cameo = { type, x: -115, y: gY - 64, width: 54, height: 64, timer: 0, phase: 'chase', resolved: false, outcome: null, barkText: 'PRIII!' };
+    } else if (type === 'ufo_beam') {
+      cameo = { type, x: 1340, y: gY - 248, width: 108, height: 42, timer: 0, phase: 'enter', resolved: false, outcome: null, targetX: basePx + 245 };
+    } else if (type === 'shark_leap') {
+      cameo = { type, x: 1180, y: gY + 34, width: 96, height: 48, timer: 0, phase: 'warn', resolved: false, outcome: null };
+    } else if (type === 'lava_meteor') {
+      cameo = { type, x: 1120, y: gY - 260, width: 52, height: 52, timer: 0, phase: 'warn', resolved: false, outcome: null };
+    } else if (type === 'penguin_slide') {
+      cameo = { type, x: 1280, y: gY - 42, width: 58, height: 42, timer: 0, phase: 'warn', resolved: false, outcome: null };
+    }
+    if (!cameo) return null;
+    this.cameos.push(cameo);
+    this._lastCameoType = type;
+    if (window.soundSystem && window.soundSystem.playCameoAlert) {
+      window.soundSystem.playCameoAlert(type);
+    }
+    return cameo;
+  }
+
+  updateCameos(speed, player) {
+    if (!Array.isArray(this.cameos)) this.cameos = [];
+    const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
+
+    // Agenda aparições raras e temáticas conforme a corrida evolui (intervalos longos e ocasionais)
+    if (!player.isInLoop && !player.isGameOver && this.cameos.length === 0 && runDist >= (this._nextCameoDist || 520)) {
+      const hasSolidGround = this.platforms.some(p => this.isPlatformSolid(p) && p.x <= player.x + 120 && p.x + p.width >= player.x - 40);
+      if (hasSolidGround) {
+        this._nextCameoDist = runDist + 440 + Math.random() * 340;
+        const biomeId = this.getBiome(player.distance).id;
+        const pools = {
+          skatepark:  ['dog_chase', 'police_chase'],
+          metropolis: ['police_chase', 'ufo_beam'],
+          beach:      ['shark_leap', 'dog_chase'],
+          cosmic:     ['ufo_beam'],
+          volcano:    ['lava_meteor', 'dog_chase'],
+          glacier:    ['penguin_slide', 'police_chase']
+        };
+        const pool = pools[biomeId] || ['dog_chase', 'police_chase'];
+        const filtered = pool.length > 1 ? pool.filter(t => t !== this._lastCameoType) : pool;
+        const chosen = filtered[Math.floor(Math.random() * filtered.length)] || pool[0];
+        this.spawnCameo(chosen, player);
+      }
+    }
+
+    const pxCenter = player.x + player.width * 0.5;
+    const pyCenter = player.y + player.getCurrentHeight() * 0.5;
+    const isProtected = (player.invincibleTimer || 0) > 0 || (player.turboTimer || 0) > 0 || (player.feverTimer || 0) > 0;
+    const isFast = !!(player.isAccelerating || (player.turboTimer || 0) > 0 || (player.feverTimer || 0) > 0);
+
+    for (let i = this.cameos.length - 1; i >= 0; i--) {
+      const c = this.cameos[i];
+      c.timer++;
+
+      if (c.type === 'dog_chase' || c.type === 'police_chase') {
+        const isDog = c.type === 'dog_chase';
+        const restOffset = isDog ? 66 : 78;
+        if (player.isGameOver || player.isInLoop) {
+          c.phase = 'leave';
+          c.x -= Math.max(5, speed * 0.8);
+        } else if (c.timer < 110) {
+          c.phase = 'chase';
+          c.x += ((player.x - restOffset) - c.x) * 0.08;
+        } else if (c.timer < 158) {
+          c.phase = 'warn';
+          c.x += ((player.x - restOffset + 6) - c.x) * 0.14;
+          // Polícia se impressiona e desiste se o skatista mandar manobra ou grind!
+          if (!isDog && !c.resolved && (player.trickState || player.isGrinding)) {
+            c.resolved = true;
+            c.outcome = 'dodged';
+            c.barkText = 'QUE MANOBRA!';
+            c.timer = 185;
+            this._awardCameoDodge(player, 'FUGA RADICAL!', 400, pxCenter, player.y - 64, 2, 20);
+          }
+        } else if (c.timer < 184) {
+          c.phase = 'lunge';
+          const u = (c.timer - 158) / 26;
+          const baseY = isDog ? this.groundY - 40 : this.groundY - 64;
+          c.x = (player.x - restOffset + 6) + Math.sin(u * Math.PI) * (restOffset + 12);
+          c.y = baseY - (isDog ? Math.sin(u * Math.PI) * 26 : Math.sin(u * Math.PI) * 14);
+
+          if (!c.resolved && c.timer >= 164) {
+            if (player.bottom < this.groundY - 26 || isFast) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              this._awardCameoDodge(player, isDog ? 'DRIBLOU O CÃO!' : 'DESPISTOU O GUARDA!', isDog ? 300 : 350, pxCenter, player.y - 60, 2, 18);
+            } else if (c.timer >= 171 && !isProtected) {
+              c.resolved = true;
+              c.outcome = 'hit';
+              player.takeDamage(isDog ? 'Mordido pelo cachorro na pista!' : 'Alcançado pelo guarda!');
+            }
+          }
+        } else {
+          c.phase = 'leave';
+          c.y = isDog ? this.groundY - 40 : this.groundY - 64;
+          c.x -= Math.max(4.5, speed * 0.72);
+        }
+        if (c.phase === 'leave' && c.x < -170) this.cameos.splice(i, 1);
+
+      } else if (c.type === 'ufo_beam') {
+        const beamBottomY = this.groundY - 96;
+        if (player.isGameOver || player.isInLoop) {
+          c.phase = 'leave';
+          c.y -= 4.5;
+          c.x -= 4;
+        } else if (c.timer < 72) {
+          c.phase = 'enter';
+          c.x += ((player.x + 245) - c.x) * 0.08;
+          c.y = this.groundY - 242 + Math.sin(c.timer * 0.09) * 5;
+        } else if (c.timer < 120) {
+          c.phase = 'warn';
+          c.x += ((player.x + 175) - c.x) * 0.12;
+          c.y = this.groundY - 240 + Math.sin(c.timer * 0.12) * 4;
+        } else if (c.timer < 235) {
+          c.phase = 'beam';
+          c.x -= Math.max(4.0, speed * 0.48);
+          c.y = this.groundY - 242 + Math.sin(c.timer * 0.12) * 4;
+          if (!c.resolved) {
+            const inBeamCol = Math.abs(c.x - pxCenter) < 42;
+            if (inBeamCol) {
+              if (!player.isDucking && !isFast && !isProtected && player.y < beamBottomY - 6) {
+                c.resolved = true;
+                c.outcome = 'hit';
+                player.takeDamage('Puxado pelo disco voador!');
+              }
+            }
+            if (!c.resolved && c.x < player.x - 16) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              this._awardCameoDodge(player, 'ESCAPOU DO OVNI!', 450, pxCenter, player.y - 68, 3, 22);
+            }
+          }
+        } else {
+          c.phase = 'leave';
+          c.y -= 4.8;
+          c.x -= 4.5;
+        }
+        if ((c.phase === 'leave' && c.y < -90) || c.x < -200) this.cameos.splice(i, 1);
+
+      } else if (c.type === 'shark_leap') {
+        if (c.timer < 52) {
+          c.phase = 'warn';
+          c.x += (880 - c.x) * 0.12;
+          c.y = this.groundY + 26 + Math.sin(c.timer * 0.25) * 4;
+        } else if (c.timer <= 142) {
+          c.phase = 'leap';
+          const u = (c.timer - 52) / 90;
+          c.x = 880 - u * 880;
+          c.y = (this.groundY + 24) - Math.sin(u * Math.PI) * 208;
+          if (!c.resolved && !player.isGameOver && !player.isInLoop) {
+            if (Math.abs(c.x - pxCenter) < 46 && Math.abs(c.y - pyCenter) < 38 && !isProtected) {
+              c.resolved = true;
+              c.outcome = 'hit';
+              player.takeDamage('Mordido pelo tubarão!');
+            } else if (c.x < player.x - 24) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              this._awardCameoDodge(player, 'TUBARÃO VOADOR!', 350, pxCenter, player.y - 64, 3, 18);
+            }
+          }
+        } else {
+          this.cameos.splice(i, 1);
+        }
+
+      } else if (c.type === 'lava_meteor') {
+        if (c.timer < 48) {
+          c.phase = 'warn';
+          c.x = 960;
+          c.y = this.groundY - 260;
+        } else if (c.timer <= 138) {
+          c.phase = 'fall';
+          const u = (c.timer - 48) / 90;
+          c.x = 960 - u * 1060;
+          c.y = this.groundY - 28 - Math.abs(Math.cos(u * Math.PI * 2)) * 140;
+          if (!c.resolved && !player.isGameOver && !player.isInLoop) {
+            if (Math.abs(c.x - pxCenter) < 38 && Math.abs(c.y - pyCenter) < 42 && !isProtected) {
+              c.resolved = true;
+              c.outcome = 'hit';
+              player.takeDamage('Acertado pelo meteoro de lava!');
+            } else if (c.x < player.x - 36) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              this._awardCameoDodge(player, 'DESVIO DE LAVA!', 400, pxCenter, player.y - 62, 2, 20);
+            }
+          }
+        } else {
+          this.cameos.splice(i, 1);
+        }
+
+      } else if (c.type === 'penguin_slide') {
+        if (c.timer < 48) {
+          c.phase = 'warn';
+          c.x += (1150 - c.x) * 0.14;
+          c.y = this.groundY - 42;
+        } else {
+          c.phase = 'slide';
+          c.x -= Math.max(8.5, speed * 1.15);
+          c.y = this.groundY - 42;
+          if (!c.resolved && !player.isGameOver && !player.isInLoop) {
+            if (Math.abs((c.x + c.width * 0.5) - pxCenter) < 42 && player.bottom > this.groundY - 38 && !isProtected) {
+              c.resolved = true;
+              c.outcome = 'hit';
+              player.takeDamage('Atropelado pelo pinguim radical!');
+            } else if (c.x + c.width < player.x - 12) {
+              c.resolved = true;
+              c.outcome = 'dodged';
+              this._awardCameoDodge(player, 'PINGUIM RADICAL!', 350, pxCenter, player.y - 58, 3, 18);
+            }
+          }
+          if (c.x < -140) this.cameos.splice(i, 1);
+        }
+      }
+    }
   }
 
   updateElevatedPlatforms(speed) {
@@ -552,12 +855,17 @@ class GameWorld {
 
   updateCollectibles(speed, player) {
     const magnetOn = (player.magnetTimer || 0) > 0;
-    const magnetUpgrade = (window.progressionManager && window.progressionManager.getUpgradeLevel)
-      ? window.progressionManager.getUpgradeLevel('magnet')
-      : 0;
+    const magnetUpgrade = (window.progressionManager && typeof window.progressionManager.getEffectiveUpgradeLevel === 'function')
+      ? window.progressionManager.getEffectiveUpgradeLevel('magnet')
+      : ((window.progressionManager && window.progressionManager.getUpgradeLevel)
+        ? window.progressionManager.getUpgradeLevel('magnet')
+        : 0);
     const magnetRadius = 270 + magnetUpgrade * 35;
-    const targetX = player.x + player.width * 0.5;
-    const targetY = player.y + player.getCurrentHeight() * 0.5;
+    const target = (player.isInLoop && player.getLoopBodyCenter)
+      ? player.getLoopBodyCenter()
+      : { x: player.x + player.width * 0.5, y: player.y + player.getCurrentHeight() * 0.5 };
+    const targetX = target.x;
+    const targetY = target.y;
 
     for (let i = this.collectibles.length - 1; i >= 0; i--) {
       const c = this.collectibles[i];
@@ -598,6 +906,8 @@ class GameWorld {
     const metroW = (currId === 'metropolis' ? 1 - t : 0) + (nextId === 'metropolis' ? t : 0);
     const beachW = (currId === 'beach' ? 1 - t : 0) + (nextId === 'beach' ? t : 0);
     const cosmicW = (currId === 'cosmic' ? 1 - t : 0) + (nextId === 'cosmic' ? t : 0);
+    const volcanoW = (currId === 'volcano' ? 1 - t : 0) + (nextId === 'volcano' ? t : 0);
+    const glacierW = (currId === 'glacier' ? 1 - t : 0) + (nextId === 'glacier' ? t : 0);
 
     // Estrelas cadentes multicoloridas no bioma cósmico (inclusive durante transição)
     if (cosmicW > 0.25) {
@@ -642,6 +952,25 @@ class GameWorld {
           m.x = 120 + Math.random() * 1260;
           m.y = this.groundY - 8 - Math.random() * 80;
         }
+      } else if (volcanoW > 0.45) {
+        // Brasas incandescentes subindo no Vulcão
+        m.phase += 0.07;
+        m.x -= speed * 0.28 - Math.sin(m.phase) * 0.9;
+        m.y -= 1.5 + (i % 4) * 0.55;
+        if (m.y < 20 || m.x < -30) {
+          m.x = 80 + Math.random() * 1300;
+          m.y = this.groundY + 10 + Math.random() * 40;
+        }
+      } else if (glacierW > 0.45) {
+        // Flocos de neve suaves na Geleira
+        m.phase += 0.045;
+        m.x -= 1.6 + speed * 0.32 + Math.sin(m.phase) * 0.7;
+        m.y += 1.6 + (i % 3) * 0.55;
+        if (m.y > this.groundY + 12) {
+          m.y = -20 - Math.random() * 90;
+          m.x = Math.random() * 1420;
+        }
+        if (m.x < -30) m.x = 1360 + Math.random() * 100;
       } else if (beachW > 0.5) {
         // Brisa e bolhas tropicais subindo suavemente
         m.phase += 0.04;
@@ -678,6 +1007,10 @@ class GameWorld {
   }
 
   hitsCollectible(player, item) {
+    if (player.isInLoop && typeof player.getLoopBodyCenter === 'function') {
+      const lc = player.getLoopBodyCenter();
+      return Math.hypot(lc.x - item.x, lc.y - item.y) < (item.size * 0.65 + 42);
+    }
     const p = player.getHitbox();
     const cx = p.x + p.w * 0.5;
     const cy = p.y + p.h * 0.5;
@@ -818,7 +1151,7 @@ class GameWorld {
   jumpableGap(speed) {
     const airSteps = (2 * Math.abs(window.PHYS.JUMP_VELOCITY)) / window.PHYS.GRAVITY;
     const reach = airSteps * speed;
-    return Math.round(Math.max(95, Math.min(235, reach * 0.42)));
+    return Math.round(Math.max(85, Math.min(168, reach * 0.40)));
   }
 
   pickChunkType(player) {
@@ -832,11 +1165,17 @@ class GameWorld {
     }
 
     // A partir da Fase 2 (600m+):
-    if (this.lastChunk === 'breakable' || this.lastChunk === 'gap') {
+    if (this.lastChunk === 'breakable' || this.lastChunk === 'gap' || this.lastChunk === 'loop') {
       const r = Math.random();
       if (r < 0.38) return 'ramp';
       if (r < 0.68) return 'rail';
       return 'flat';
+    }
+
+    this._chunksSinceLoop = (this._chunksSinceLoop || 0) + 1;
+    if (d >= 650 && this._chunksSinceLoop >= 7 && Math.random() < 0.28) {
+      this._chunksSinceLoop = 0;
+      return 'loop';
     }
 
     const isHard = player.difficulty === 'hard';
@@ -856,6 +1195,7 @@ class GameWorld {
     this.lastChunk = type;
 
     switch (type) {
+      case 'loop':      this.chunkLoop(startX, player);      break;
       case 'breakable': this.chunkBreakable(startX, player); break;
       case 'gap':       this.chunkGap(startX, player);       break;
       case 'ramp':      this.chunkRamp(startX, player);      break;
@@ -955,6 +1295,34 @@ class GameWorld {
       if (Math.random() < 0.65) {
         this.collectibles.push({ type: 'coin', x: obsX + 60, y: this.groundY - 128, size: 28, collected: false });
       }
+    } else if (biomeId === 'volcano' && roll < 0.38) {
+      // Rocha vulcânica incandescente no bioma Vulcão
+      firstKind = 'lava_rock';
+      this.obstacles.push({
+        type: 'lava_rock',
+        x: obsX, y: this.groundY - 56,
+        width: 56, height: 56,
+        damageReason: 'Bateu na rocha de lava',
+        hit: false
+      });
+      obsEndX = obsX + 56;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 28, y: this.groundY - 124, size: 28, collected: false });
+      }
+    } else if (biomeId === 'glacier' && roll < 0.38) {
+      // Cristal de gelo afiado na Geleira
+      firstKind = 'ice_crystal';
+      this.obstacles.push({
+        type: 'ice_crystal',
+        x: obsX, y: this.groundY - 60,
+        width: 54, height: 60,
+        damageReason: 'Bateu no cristal de gelo',
+        hit: false
+      });
+      obsEndX = obsX + 54;
+      if (Math.random() < 0.65) {
+        this.collectibles.push({ type: 'coin', x: obsX + 27, y: this.groundY - 126, size: 28, collected: false });
+      }
     } else if (roll < 0.55) {
       firstKind = 'crate';
       this.obstacles.push({
@@ -986,14 +1354,15 @@ class GameWorld {
     }
 
     // Sequência ritmada (2º obstáculo logo após o 1º): pula->agacha, agacha->pula ou dupla caixa!
-    const comboStartDist = isHard ? 80 : 220;
+    const comboStartDist = isHard ? 220 : 380;
     const comboChance = d >= comboStartDist
       ? Math.min(isHard ? 0.85 : 0.72, (isHard ? 0.48 : 0.34) + (d - comboStartDist) / 3600)
       : 0;
     if (comboChance > 0 && Math.random() < comboChance) {
       const gapBetween = (isHard ? 255 : 285) + Math.random() * 55;
       const obs2X = obsEndX + gapBetween;
-      const wantSign = (firstKind === 'crate' || firstKind === 'barrel')
+      const isGroundLow = firstKind === 'crate' || firstKind === 'barrel' || firstKind === 'lava_rock' || firstKind === 'ice_crystal';
+      const wantSign = isGroundLow
         ? Math.random() < 0.65
         : Math.random() < 0.30;
 
@@ -1023,7 +1392,8 @@ class GameWorld {
       platform.width = Math.max(platform.width, (obsEndX - x) + 280);
     }
 
-    // Trampolim elástico ou Speed Pad com margem segura (>= 205px) após o obstáculo
+    // Trampolim elástico ou Speed Pad (Speed Pad só após 500m para início mais calmo)
+    const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
     const padRoll = Math.random();
     if (padRoll < 0.28) {
       const padX = Math.max(obsEndX + 210, x + baseWidth - 320);
@@ -1050,7 +1420,7 @@ class GameWorld {
         platform.width = Math.max(platform.width, (padX - x) + 330);
         this.spawnJumpArc(padX + 20, this.groundY - 165, 3, 220, player.speed);
       }
-    } else if (padRoll < 0.46) {
+    } else if (runDist >= 500 && padRoll < 0.46) {
       const padX = Math.max(obsEndX + 205, x + baseWidth - 260);
       platform.width = Math.max(platform.width, (padX - x) + 290);
       this.pads.push({ type: 'speed', x: padX, y: this.groundY, width: 92, height: 10, used: false, anim: 0 });
@@ -1128,7 +1498,7 @@ class GameWorld {
           });
           this._maybeSpawnBonusPickup(postX + 27, this.groundY - 126, player);
         }
-      } else if (Math.random() < 0.35) {
+      } else if ((player.sessionDistance ?? player.distance ?? 0) >= 500 && Math.random() < 0.35) {
         const padX = railX + railWidth + 140;
         this.pads.push({ type: 'speed', x: padX, y: this.groundY, width: 92, height: 10, used: false, anim: 0 });
         this._maybeSpawnBonusPickup(padX + 125, this.groundY - 70, player);
@@ -1177,7 +1547,8 @@ class GameWorld {
     // Arco de moedas ajustado à parábola realista da rampa
     this.spawnJumpArc(lipX + 24, this.groundY - 142, 4, 300, player.speed);
 
-    if (Math.random() < 0.42) {
+    const runDist = player.sessionDistance !== undefined ? player.sessionDistance : (player.distance || 0);
+    if (runDist >= 500 && Math.random() < 0.40) {
       this.collectibles.push({
         type: 'turbo', x: lipX + 215, y: this.groundY - 238, size: 40, collected: false
       });
@@ -1232,13 +1603,49 @@ class GameWorld {
 
     const airSteps = (2 * Math.abs(window.PHYS.JUMP_VELOCITY)) / window.PHYS.GRAVITY;
     const reach = airSteps * player.speed;
-    const breakWidth = Math.round(Math.max(180, Math.min(420, reach * (0.62 + Math.random() * 0.14))));
+    const breakWidth = Math.round(Math.max(135, Math.min(360, reach * (0.58 + Math.random() * 0.14))));
 
     this.platforms.push(this.makePlatform(x, runway));
     this.platforms.push(this.makePlatform(x + runway, breakWidth, { breakable: true, speed: player.speed }));
     this.platforms.push(this.makePlatform(x + runway + breakWidth, TRACK.MIN_LANDING + Math.random() * 220));
 
     this.spawnJumpArc(x + runway + 30, this.groundY - 120, 3, breakWidth - 40, player.speed);
+  }
+
+  // ---- Bloco especial com Looping 360° radical ----
+  chunkLoop(x, player) {
+    const width = 960;
+    this.platforms.push(this.makePlatform(x, width));
+
+    const radius = 128;
+    const cx = x + 440;
+    const cy = this.groundY - radius;
+    const loopObj = { cx, cy, radius, entered: false, completed: false, glowPhase: 0 };
+    if (!Array.isArray(this.loops)) this.loops = [];
+    this.loops.push(loopObj);
+
+    const rCoin = radius - 34;
+    for (let i = 1; i <= 8; i++) {
+      if (i === 4) {
+        this.collectibles.push({
+          type: Math.random() < 0.5 ? 'double' : 'magnet',
+          x: cx,
+          y: cy - rCoin,
+          size: 38,
+          collected: false
+        });
+        continue;
+      }
+      const theta = (i / 9) * Math.PI * 2;
+      this.collectibles.push({
+        type: 'coin',
+        x: cx + rCoin * Math.sin(theta),
+        y: cy + rCoin * Math.cos(theta),
+        size: 26,
+        collected: false
+      });
+    }
+    return loopObj;
   }
 
   /** Distribui moedas ao longo de uma parábola de salto. */
@@ -1284,12 +1691,23 @@ class GameWorld {
           far:   this.renderCosmicFar(1400, 320),
           mid:   this.renderCosmicMid(1140, 380),
           props: this.renderCosmicProps(820, 290)
+        },
+        volcano: {
+          far:   this.renderVolcanoFar(1400, 340),
+          mid:   this.renderVolcanoMid(1140, 390),
+          props: this.renderVolcanoProps(820, 300)
+        },
+        glacier: {
+          far:   this.renderGlacierFar(1400, 340),
+          mid:   this.renderGlacierMid(1140, 380),
+          props: this.renderGlacierProps(820, 300)
         }
       },
       textures: {
         asphalt: this.renderAsphaltTexture(256),
         wood:    this.renderWoodTexture(256),
-        cosmic:  this.renderCosmicTexture(256)
+        cosmic:  this.renderCosmicTexture(256),
+        ice:     this.renderIceTexture(256)
       }
     };
   }
@@ -2281,6 +2699,189 @@ class GameWorld {
     return c;
   }
 
+  renderIceTexture(size) {
+    const c = this.makeCanvas(size, size);
+    const ctx = c.getContext('2d');
+    ctx.strokeStyle = 'rgba(224, 242, 254, 0.24)';
+    ctx.lineWidth = 1.4;
+    for (let x = -size; x < size * 2; x += 48) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x + 42, size);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.14)';
+    for (let i = 0; i < 32; i++) {
+      ctx.fillRect(Math.random() * size, Math.random() * size, 2.2, 2.2);
+    }
+    return c;
+  }
+
+  renderVolcanoFar(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    const peaks = [
+      [180, 140, 290, false],
+      [520, 265, 340, true],
+      [880, 175, 280, false],
+      [1210, 230, 310, true]
+    ];
+    for (const [cx, ph, pw, hasCrater] of peaks) {
+      const grad = ctx.createLinearGradient(cx, h - ph, cx, h);
+      grad.addColorStop(0, hasCrater ? '#4c1112' : '#2f0a0e');
+      grad.addColorStop(1, '#140407');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(cx - pw * 0.5, h);
+      if (hasCrater) {
+        ctx.lineTo(cx - 34, h - ph);
+        ctx.lineTo(cx + 34, h - ph);
+      } else {
+        ctx.lineTo(cx, h - ph);
+      }
+      ctx.lineTo(cx + pw * 0.5, h);
+      ctx.closePath();
+      ctx.fill();
+
+      if (hasCrater) {
+        const lavaGlow = ctx.createRadialGradient(cx, h - ph + 4, 6, cx, h - ph - 12, 85);
+        lavaGlow.addColorStop(0, 'rgba(254, 240, 138, 0.72)');
+        lavaGlow.addColorStop(0.45, 'rgba(249, 115, 22, 0.42)');
+        lavaGlow.addColorStop(1, 'rgba(249, 115, 22, 0)');
+        ctx.fillStyle = lavaGlow;
+        ctx.fillRect(cx - 85, h - ph - 95, 170, 115);
+
+        ctx.strokeStyle = 'rgba(251, 146, 60, 0.75)';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - 6, h - ph + 4);
+        ctx.quadraticCurveTo(cx - 26, h - ph * 0.52, cx + 14, h);
+        ctx.stroke();
+      }
+    }
+    return c;
+  }
+
+  renderVolcanoMid(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    const crags = [
+      [110, 145, 190], [370, 195, 220], [660, 160, 210], [950, 210, 230]
+    ];
+    for (const [cx, ph, pw] of crags) {
+      ctx.fillStyle = '#1d070b';
+      ctx.beginPath();
+      ctx.moveTo(cx - pw * 0.5, h);
+      ctx.lineTo(cx - pw * 0.16, h - ph * 0.78);
+      ctx.lineTo(cx + pw * 0.08, h - ph);
+      ctx.lineTo(cx + pw * 0.5, h);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(249, 115, 22, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(cx - pw * 0.08, h - ph * 0.65);
+      ctx.lineTo(cx + pw * 0.04, h - ph * 0.35);
+      ctx.lineTo(cx - pw * 0.12, h);
+      ctx.stroke();
+    }
+    // Rio de lava brilhante na base
+    const lava = ctx.createLinearGradient(0, h - 22, 0, h);
+    lava.addColorStop(0, 'rgba(249, 115, 22, 0.70)');
+    lava.addColorStop(1, 'rgba(185, 28, 28, 0.92)');
+    ctx.fillStyle = lava;
+    ctx.fillRect(0, h - 20, w, 20);
+    return c;
+  }
+
+  renderVolcanoProps(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    for (const [bx, bh, bw] of [[150, 128, 34], [430, 152, 38], [690, 116, 30]]) {
+      ctx.fillStyle = '#18080b';
+      ctx.fillRect(bx - bw * 0.5, h - bh, bw, bh);
+      ctx.fillStyle = 'rgba(251, 146, 60, 0.45)';
+      ctx.fillRect(bx - bw * 0.5, h - bh, 4, bh);
+      ctx.fillStyle = 'rgba(254, 240, 138, 0.6)';
+      ctx.fillRect(bx - 3, h - bh + 16, 4, 18);
+      ctx.fillRect(bx + 2, h - bh + 54, 3, 24);
+    }
+    return c;
+  }
+
+  renderGlacierFar(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    const alps = [
+      [160, 195, 280], [450, 260, 320], [790, 210, 290], [1140, 250, 330]
+    ];
+    for (const [cx, ph, pw] of alps) {
+      const grad = ctx.createLinearGradient(cx, h - ph, cx, h);
+      grad.addColorStop(0, '#e0f2fe');
+      grad.addColorStop(0.45, '#38bdf8');
+      grad.addColorStop(1, '#0c4a6e');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(cx - pw * 0.5, h);
+      ctx.lineTo(cx, h - ph);
+      ctx.lineTo(cx + pw * 0.5, h);
+      ctx.closePath();
+      ctx.fill();
+
+      // Face sombreada à esquerda para volume 3D alpino
+      ctx.fillStyle = 'rgba(7, 31, 51, 0.36)';
+      ctx.beginPath();
+      ctx.moveTo(cx - pw * 0.5, h);
+      ctx.lineTo(cx, h - ph);
+      ctx.lineTo(cx + pw * 0.08, h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    return c;
+  }
+
+  renderGlacierMid(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    for (const [fx, fh, fw] of [[150, 150, 240], [490, 175, 280], [880, 140, 250]]) {
+      const grad = ctx.createLinearGradient(fx, h - fh, fx, h);
+      grad.addColorStop(0, '#bae6fd');
+      grad.addColorStop(1, '#083344');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(fx - fw * 0.5, h);
+      ctx.lineTo(fx - fw * 0.18, h - fh);
+      ctx.lineTo(fx + fw * 0.22, h - fh * 0.85);
+      ctx.lineTo(fx + fw * 0.5, h);
+      ctx.closePath();
+      ctx.fill();
+    }
+    return c;
+  }
+
+  renderGlacierProps(w, h) {
+    const c = this.makeCanvas(w, h);
+    const ctx = c.getContext('2d');
+    for (const [px, ph] of [[130, 130], [360, 155], [580, 118], [730, 142]]) {
+      ctx.fillStyle = '#082f49';
+      ctx.fillRect(px - 4, h - 30, 8, 30);
+      for (let tier = 0; tier < 3; tier++) {
+        const ty = h - 24 - tier * (ph * 0.25);
+        const tw = (36 - tier * 8);
+        ctx.fillStyle = tier === 2 ? '#e0f2fe' : '#164e63';
+        ctx.beginPath();
+        ctx.moveTo(px - tw, ty);
+        ctx.lineTo(px, ty - ph * 0.34);
+        ctx.lineTo(px + tw, ty);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    return c;
+  }
+
   _getPattern(ctx, key) {
     if (this.patterns[key] !== undefined) return this.patterns[key];
     if (!this.layers || !this.layers.textures || !this.layers.textures[key]) return null;
@@ -2312,6 +2913,8 @@ class GameWorld {
     const metroW = this._biomeWeight(blend, 'metropolis');
     const beachW = this._biomeWeight(blend, 'beach');
     const cosmicW = this._biomeWeight(blend, 'cosmic');
+    const volcanoW = this._biomeWeight(blend, 'volcano');
+    const glacierW = this._biomeWeight(blend, 'glacier');
 
     // Estrelas com fade-out suave na praia
     const starAlpha = current.starAlpha + (next.starAlpha - current.starAlpha) * t;
@@ -2319,10 +2922,16 @@ class GameWorld {
       this.tile(ctx, L.stars, this.scroll * 0.012, horizon - 470, W, starAlpha * 0.92);
     }
 
-    // Nebulosa + aurora suave no bioma cósmico
+    // Nebulosa + aurora suave no bioma cósmico e Aurora Boreal verde-ciano na Geleira
     if (cosmicW > 0.02) {
       this.tile(ctx, L.nebula, this.scroll * 0.018, horizon - 460, W, cosmicW * 0.9);
       this._drawCosmicAurora(ctx, W, horizon, cosmicW);
+    }
+    if (glacierW > 0.03) {
+      this._drawAuroraBands(ctx, W, horizon, glacierW, [
+        { y: horizon - 335, rgb: '52, 211, 153', amp: 26, freq: 0.0045, speed: 0.016 },
+        { y: horizon - 290, rgb: '56, 189, 248', amp: 20, freq: 0.006,  speed: -0.014 }
+      ]);
     }
 
     // Holofotes lentos varrendo o céu na metrópole neon
@@ -2332,6 +2941,19 @@ class GameWorld {
 
     // Camada distante (com crossfade suave entre biomas)
     this._drawBiomeLayer(ctx, 'far', current.id, next.id, t, this.scroll * 0.055, horizon, W, 0.92, 6);
+
+    // Clarão de erupção pulsante no Vulcão
+    if (volcanoW > 0.05) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const pulse = 0.55 + 0.45 * Math.sin(this.time * 0.045);
+      const vg = ctx.createRadialGradient(W * 0.48, horizon - 60, 20, W * 0.48, horizon - 80, 320);
+      vg.addColorStop(0, `rgba(251, 146, 60, ${(0.22 * pulse * volcanoW).toFixed(3)})`);
+      vg.addColorStop(1, 'rgba(251, 146, 60, 0)');
+      ctx.fillStyle = vg;
+      ctx.fillRect(W * 0.48 - 320, horizon - 400, 640, 380);
+      ctx.restore();
+    }
 
     // Feixe suave do farol costeiro na praia
     if (beachW > 0.05) {
@@ -2507,13 +3129,9 @@ class GameWorld {
     ctx.restore();
   }
 
-  _drawCosmicAurora(ctx, W, horizon, alpha) {
+  _drawAuroraBands(ctx, W, horizon, alpha, bands) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const bands = [
-      { y: horizon - 330, rgb: '168, 85, 247', amp: 24, freq: 0.005, speed: 0.018 },
-      { y: horizon - 285, rgb: '56, 189, 248', amp: 18, freq: 0.0065, speed: -0.014 }
-    ];
     for (const b of bands) {
       const grad = ctx.createLinearGradient(0, b.y - 38, 0, b.y + 44);
       grad.addColorStop(0, `rgba(${b.rgb}, 0)`);
@@ -2532,6 +3150,13 @@ class GameWorld {
       ctx.fill();
     }
     ctx.restore();
+  }
+
+  _drawCosmicAurora(ctx, W, horizon, alpha) {
+    this._drawAuroraBands(ctx, W, horizon, alpha, [
+      { y: horizon - 330, rgb: '168, 85, 247', amp: 24, freq: 0.005, speed: 0.018 },
+      { y: horizon - 285, rgb: '56, 189, 248', amp: 18, freq: 0.0065, speed: -0.014 }
+    ]);
   }
 
   _drawCosmicFloaters(ctx, W, horizon, alpha) {
@@ -2778,6 +3403,9 @@ class GameWorld {
     for (const pad of this.pads) this.drawPad(ctx, pad);
     for (const ep of this.elevatedPlatforms) this.drawElevatedPlatform(ctx, ep, blend);
     for (const r of this.ramps) this.drawRamp(ctx, r);
+    if (Array.isArray(this.loops)) {
+      for (const lp of this.loops) this.drawLoop(ctx, lp, blend);
+    }
     for (const rail of this.rails) this.drawRail(ctx, rail, blend);
     for (const o of this.obstacles) this.drawObstacle(ctx, o);
   }
@@ -3113,8 +3741,9 @@ class GameWorld {
     ctx.fillRect(x, y + TRACK.SURFACE, w, TRACK.DEPTH - TRACK.SURFACE);
 
     // Textura procedural sincronizada com o scroll (com crossfade suave entre biomas)
-    const texKeyCurr = current.id === 'beach' ? 'wood' : current.id === 'cosmic' ? 'cosmic' : 'asphalt';
-    const texKeyNext = next.id === 'beach' ? 'wood' : next.id === 'cosmic' ? 'cosmic' : 'asphalt';
+    const texForBiome = (bid) => (bid === 'beach' ? 'wood' : bid === 'cosmic' ? 'cosmic' : bid === 'glacier' ? 'ice' : 'asphalt');
+    const texKeyCurr = texForBiome(current.id);
+    const texKeyNext = texForBiome(next.id);
     const patternCurr = this._getPattern(ctx, texKeyCurr);
     if (patternCurr && (1 - t > 0.02 || texKeyCurr === texKeyNext)) {
       ctx.save();
@@ -3238,6 +3867,32 @@ class GameWorld {
         ctx.lineTo(px + 48, topY + 70);
         ctx.stroke();
       }
+    } else if (biomeId === 'volcano') {
+      // Colunas de basalto escuro com veios de magma
+      for (let px = x + 45; px < x + w - 45; px += 190) {
+        ctx.fillStyle = '#1b070a';
+        ctx.fillRect(px, topY + 6, 36, h);
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.48)';
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        ctx.moveTo(px + 10, topY + 12);
+        ctx.lineTo(px + 22, topY + 52);
+        ctx.lineTo(px + 12, topY + 95);
+        ctx.stroke();
+      }
+    } else if (biomeId === 'glacier') {
+      // Pilares translúcidos de gelo e estalactites
+      for (let px = x + 50; px < x + w - 40; px += 170) {
+        ctx.fillStyle = 'rgba(14, 116, 144, 0.45)';
+        ctx.beginPath();
+        ctx.moveTo(px - 18, topY);
+        ctx.lineTo(px + 18, topY);
+        ctx.lineTo(px, topY + 96);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = 'rgba(224, 242, 254, 0.24)';
+        ctx.fillRect(px - 4, topY, 3, 72);
+      }
     } else {
       // Pilares e vigas de viaduto urbano
       ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
@@ -3289,9 +3944,15 @@ class GameWorld {
         ctx.fillRect(rx + 150, y, 36, 86);
       }
     } else {
-      // Reflexos quentes/frios suaves no skatepark e cósmico
-      const primary = biomeId === 'cosmic' ? '192, 132, 252' : '255, 224, 165';
-      const secondary = biomeId === 'cosmic' ? '56, 189, 248' : '120, 200, 255';
+      // Reflexos coerentes com skatepark, cósmico, vulcão e geleira
+      const primary = biomeId === 'cosmic' ? '192, 132, 252'
+        : biomeId === 'volcano' ? '249, 115, 22'
+          : biomeId === 'glacier' ? '186, 230, 253'
+            : '255, 224, 165';
+      const secondary = biomeId === 'cosmic' ? '56, 189, 248'
+        : biomeId === 'volcano' ? '254, 240, 138'
+          : biomeId === 'glacier' ? '52, 211, 153'
+            : '120, 200, 255';
       for (let rx = start; rx < x + w + period; rx += period) {
         const glow = ctx.createLinearGradient(0, y, 0, y + 96);
         glow.addColorStop(0, `rgba(${primary}, 0.16)`);
@@ -3595,6 +4256,105 @@ class GameWorld {
     ctx.restore();
   }
 
+  /** Looping 360° monumental com pilares metálicos, setas neon animadas e emblema central. */
+  drawLoop(ctx, lp, blend) {
+    const cx = lp.cx;
+    const cy = lp.cy;
+    const r = lp.radius || 128;
+    if (cx + r < -180 || cx - r > 1520) return;
+
+    const edgeColor = lerpHex(blend.current.edgeColor, blend.next.edgeColor, blend.t);
+    const outerR = r + 18;
+    const innerR = r - 2;
+    const groundY = this.groundY;
+
+    ctx.save();
+
+    // Sombra projetada na pista
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+    ctx.beginPath();
+    ctx.ellipse(cx, groundY + 4, r * 0.92, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Pilares de sustentação em treliça atrás do anel
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 10;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - r * 0.82, groundY);
+    ctx.lineTo(cx - r * 0.56, cy - r * 0.25);
+    ctx.moveTo(cx + r * 0.82, groundY);
+    ctx.lineTo(cx + r * 0.56, cy - r * 0.25);
+    ctx.stroke();
+
+    ctx.strokeStyle = edgeColor;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Anel estrutural metálico escuro (com contorno bem marcado)
+    ctx.beginPath();
+    ctx.arc(cx, cy, (outerR + innerR) * 0.5, 0, Math.PI * 2);
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = (outerR - innerR) + 5;
+    ctx.stroke();
+
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = outerR - innerR;
+    ctx.stroke();
+
+    // Faixa neon interna brilhante por onde passam as rodas
+    ctx.beginPath();
+    ctx.arc(cx, cy, innerR + 3, 0, Math.PI * 2);
+    ctx.strokeStyle = edgeColor;
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+
+    // Setas luminosas indicando o giro 360° anti-horário (entrada -> subida pela direita -> teto -> descida)
+    const phase = lp.glowPhase || 0;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2 + phase * 0.35;
+      const sx = cx + (r + 8) * Math.sin(ang);
+      const sy = cy + (r + 8) * Math.cos(ang);
+      const wave = 0.45 + 0.55 * Math.sin(phase * 2 - i * 0.8);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(-ang);
+      ctx.fillStyle = edgeColor;
+      ctx.globalAlpha = wave * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(7, 0);
+      ctx.lineTo(-4, -5);
+      ctx.lineTo(-1, 0);
+      ctx.lineTo(-4, 5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+
+    // Pórtico brilhante de entrada na base do loop
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const enterGlow = ctx.createRadialGradient(cx, groundY - 4, 2, cx, groundY - 4, 46);
+    enterGlow.addColorStop(0, lp.completed ? 'rgba(52, 211, 153, 0.72)' : 'rgba(34, 211, 238, 0.72)');
+    enterGlow.addColorStop(1, 'rgba(34, 211, 238, 0)');
+    ctx.fillStyle = enterGlow;
+    ctx.fillRect(cx - 46, groundY - 48, 92, 54);
+    ctx.restore();
+
+    // Placa discreta no centro do arco ("360°")
+    ctx.font = '800 14px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = lp.completed ? 'rgba(52, 211, 153, 0.72)' : 'rgba(226, 232, 255, 0.45)';
+    ctx.fillText(lp.completed ? '360° ✓' : 'LOOP 360°', cx, cy + 5);
+
+    ctx.restore();
+  }
+
   drawObstacle(ctx, obs) {
     ctx.save();
     if (obs.type === 'crate') {
@@ -3603,10 +4363,471 @@ class GameWorld {
       this.drawDrone(ctx, obs);
     } else if (obs.type === 'barrel') {
       this.drawBarrel(ctx, obs);
+    } else if (obs.type === 'lava_rock') {
+      this.drawLavaRock(ctx, obs);
+    } else if (obs.type === 'ice_crystal') {
+      this.drawIceCrystal(ctx, obs);
     } else {
       this.drawSign(ctx, obs);
     }
     ctx.restore();
+  }
+
+  drawLavaRock(ctx, o) {
+    const { x, y, width: w, height: h } = o;
+    const cx = x + w * 0.5;
+    // Sombra no chão
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.48)';
+    ctx.beginPath();
+    ctx.ellipse(cx, this.groundY + 4, w * 0.62, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Rocha vulcânica irregular com brilho de lava interna
+    const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+    grad.addColorStop(0, '#572017');
+    grad.addColorStop(0.55, '#2b0d0b');
+    grad.addColorStop(1, '#160606');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + h);
+    ctx.lineTo(x + 2, y + h * 0.45);
+    ctx.lineTo(x + w * 0.28, y + 8);
+    ctx.lineTo(x + w * 0.62, y + 2);
+    ctx.lineTo(x + w - 4, y + h * 0.36);
+    ctx.lineTo(x + w - 2, y + h);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Rachaduras brilhantes de magma
+    ctx.strokeStyle = '#fde047';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - 10, y + 18);
+    ctx.lineTo(cx, y + 32);
+    ctx.lineTo(cx - 6, y + h - 8);
+    ctx.moveTo(cx, y + 32);
+    ctx.lineTo(cx + 12, y + 40);
+    ctx.stroke();
+
+    // Seta de salto acima
+    const bob = Math.sin(this.time * 0.09) * 3;
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, y - 12 + bob);
+    ctx.lineTo(cx, y - 21 + bob);
+    ctx.lineTo(cx + 8, y - 12 + bob);
+    ctx.stroke();
+    ctx.strokeStyle = '#fb923c';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+  }
+
+  drawIceCrystal(ctx, o) {
+    const { x, y, width: w, height: h } = o;
+    const cx = x + w * 0.5;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+    ctx.beginPath();
+    ctx.ellipse(cx, this.groundY + 4, w * 0.6, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const grad = ctx.createLinearGradient(cx, y, cx, y + h);
+    grad.addColorStop(0, '#e0f2fe');
+    grad.addColorStop(0.5, '#38bdf8');
+    grad.addColorStop(1, '#0c4a6e');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + h);
+    ctx.lineTo(x + 4, y + h * 0.46);
+    ctx.lineTo(x + w * 0.28, y + h * 0.25);
+    ctx.lineTo(cx, y);
+    ctx.lineTo(x + w * 0.78, y + h * 0.28);
+    ctx.lineTo(x + w - 4, y + h * 0.52);
+    ctx.lineTo(x + w - 6, y + h);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.88)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.strokeStyle = '#bae6fd';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Faceta luminosa
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.beginPath();
+    ctx.moveTo(cx, y);
+    ctx.lineTo(x + w * 0.74, y + h * 0.34);
+    ctx.lineTo(cx, y + h * 0.75);
+    ctx.closePath();
+    ctx.fill();
+
+    const bob = Math.sin(this.time * 0.09) * 3;
+    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - 8, y - 12 + bob);
+    ctx.lineTo(cx, y - 21 + bob);
+    ctx.lineTo(cx + 8, y - 12 + bob);
+    ctx.stroke();
+    ctx.strokeStyle = '#a5f3fc';
+    ctx.lineWidth = 2.6;
+    ctx.stroke();
+  }
+
+  _drawCameoTag(ctx, x, y, text, color = '#fbbf24') {
+    if (!text) return;
+    ctx.save();
+    ctx.font = '800 12px Outfit, sans-serif';
+    const w = Math.max(76, ctx.measureText(text).width + 20);
+    const h = 24;
+    const rx = Math.max(48, Math.min(1232, x)) - w * 0.5;
+    const ry = Math.max(24, y - h);
+
+    ctx.fillStyle = 'rgba(6, 10, 24, 0.86)';
+    this.roundRect(ctx, rx, ry, w, h, 8);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, rx + w * 0.5, ry + h * 0.5 + 0.5);
+    ctx.restore();
+  }
+
+  /** Renderiza aparições raras e inusitadas (cachorro, policial, OVNI, tubarão, lava e pinguim). */
+  drawCameos(ctx, player) {
+    if (!Array.isArray(this.cameos) || this.cameos.length === 0) return;
+
+    for (const c of this.cameos) {
+      ctx.save();
+      if (c.type === 'dog_chase') {
+        const cx = c.x + 28;
+        const cy = c.y + 20;
+        const stride = Math.sin(c.timer * 0.52) * 8;
+        // Sombra no chão
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.36)';
+        ctx.beginPath();
+        ctx.ellipse(cx, this.groundY + 4, 24, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Patas correndo
+        ctx.strokeStyle = '#92400e';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - 12, cy + 6); ctx.lineTo(cx - 16 + stride, cy + 18);
+        ctx.moveTo(cx + 12, cy + 6); ctx.lineTo(cx + 16 - stride, cy + 18);
+        ctx.stroke();
+
+        // Rabinho abanando
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, cy - 2);
+        ctx.lineTo(cx - 28, cy - 10 + Math.sin(c.timer * 0.7) * 5);
+        ctx.stroke();
+
+        // Corpo do cachorro
+        ctx.fillStyle = '#d97706';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 20, 12, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        // Cabeça + orelhas + coleira
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(cx + 10, cy - 10, 5, 13);
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(cx + 18, cy - 9, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#78350f';
+        ctx.beginPath();
+        ctx.ellipse(cx + 13, cy - 11, 4, 7, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(cx + 27, cy - 9, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(cx + 21, cy - 12, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+
+        const tag = c.phase === 'warn' ? '! CÃO! PULE OU REME !' : (c.outcome === 'dodged' ? 'GRRR!' : c.barkText);
+        this._drawCameoTag(ctx, cx, c.y - 12, tag, c.phase === 'warn' ? '#f43f7e' : '#fbbf24');
+
+      } else if (c.type === 'police_chase') {
+        const cx = c.x + 26;
+        const cy = c.y + 32;
+        const stride = Math.sin(c.timer * 0.45) * 9;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
+        ctx.beginPath();
+        ctx.ellipse(cx, this.groundY + 4, 22, 5.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pernas correndo
+        ctx.strokeStyle = '#1e3a8a';
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx - 4, cy + 12); ctx.lineTo(cx - 8 + stride, this.groundY - 2);
+        ctx.moveTo(cx + 4, cy + 12); ctx.lineTo(cx + 8 - stride, this.groundY - 2);
+        ctx.stroke();
+
+        // Tronco uniforme azul
+        ctx.fillStyle = '#1d4ed8';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        this.roundRect(ctx, cx - 12, cy - 10, 24, 25, 6);
+        ctx.fill();
+        ctx.stroke();
+
+        // Giroflex no ombro piscando azul/vermelho
+        const flashBlue = Math.floor(c.timer / 6) % 2 === 0;
+        ctx.fillStyle = flashBlue ? '#38bdf8' : '#f43f7e';
+        ctx.beginPath();
+        ctx.arc(cx - 9, cy - 12, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Cabeça e quepe policial
+        ctx.fillStyle = '#fde2c8';
+        ctx.beginPath();
+        ctx.arc(cx + 1, cy - 20, 10.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#1e3a8a';
+        this.roundRect(ctx, cx - 10, cy - 33, 24, 9, 3);
+        ctx.fill();
+        ctx.fillStyle = '#fbbf24';
+        ctx.beginPath();
+        ctx.arc(cx + 4, cy - 29, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(cx + 4, cy - 26, 12, 3);
+
+        const tag = c.phase === 'warn' ? '! GUARDA! MANOBRE OU PULE !' : (c.barkText || 'PRIII!');
+        this._drawCameoTag(ctx, cx, c.y - 14, tag, c.phase === 'warn' ? '#38bdf8' : '#f43f7e');
+
+      } else if (c.type === 'ufo_beam') {
+        const cx = c.x;
+        const cy = c.y;
+        const beamBottomY = this.groundY - 96;
+
+        // Mira ou raio trator descendo (deixa vão livre de 96px no chão para agachar!)
+        if (c.phase === 'warn') {
+          ctx.save();
+          ctx.setLineDash([7, 7]);
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.72)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy + 18);
+          ctx.lineTo(cx, beamBottomY);
+          ctx.stroke();
+          ctx.restore();
+        } else if (c.phase === 'beam') {
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const bg = ctx.createLinearGradient(cx, cy + 16, cx, beamBottomY);
+          bg.addColorStop(0, 'rgba(52, 211, 153, 0.72)');
+          bg.addColorStop(0.75, 'rgba(34, 211, 238, 0.36)');
+          bg.addColorStop(1, 'rgba(34, 211, 238, 0.06)');
+          ctx.fillStyle = bg;
+          ctx.beginPath();
+          ctx.moveTo(cx - 22, cy + 14);
+          ctx.lineTo(cx + 22, cy + 14);
+          ctx.lineTo(cx + 46, beamBottomY);
+          ctx.lineTo(cx - 46, beamBottomY);
+          ctx.closePath();
+          ctx.fill();
+
+          // Anéis do raio trator
+          const ringT = (c.timer % 24) / 24;
+          const ry = beamBottomY - ringT * (beamBottomY - cy - 18);
+          ctx.strokeStyle = 'rgba(167, 243, 208, 0.8)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.ellipse(cx, ry, 28 + (1 - ringT) * 14, 6, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Cúpula verde-ciano com E.T.
+        ctx.fillStyle = 'rgba(103, 232, 249, 0.55)';
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy - 10, 26, 18, 0, Math.PI, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#4ade80';
+        ctx.beginPath();
+        ctx.arc(cx, cy - 14, 7, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Disco metálico
+        const dg = ctx.createLinearGradient(cx - 54, cy, cx + 54, cy + 16);
+        dg.addColorStop(0, '#94a3b8');
+        dg.addColorStop(0.5, '#e2e8f0');
+        dg.addColorStop(1, '#475569');
+        ctx.fillStyle = dg;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 54, 15, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 2.4;
+        ctx.stroke();
+
+        // Luzes neon giratórias
+        for (let l = -2; l <= 2; l++) {
+          const lit = ((Math.floor(c.timer / 5) + l + 2) % 3) === 0;
+          ctx.fillStyle = lit ? '#4ade80' : '#f43f7e';
+          ctx.beginPath();
+          ctx.arc(cx + l * 18, cy + 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (c.phase === 'warn' || c.phase === 'beam') {
+          this._drawCameoTag(ctx, cx, cy - 34, '! OVNI! AGACHE ↓ OU REME → !', '#34d399');
+        }
+
+      } else if (c.type === 'shark_leap') {
+        if (c.phase === 'warn') {
+          const sx = c.x;
+          const sy = this.groundY + 8;
+          ctx.fillStyle = '#64748b';
+          ctx.beginPath();
+          ctx.moveTo(sx - 12, sy);
+          ctx.lineTo(sx + 6, sy - 26);
+          ctx.lineTo(sx + 16, sy);
+          ctx.closePath();
+          ctx.fill();
+          this._drawCameoTag(ctx, sx, sy - 34, '! TUBARÃO VOADOR !', '#38bdf8');
+        } else {
+          ctx.save();
+          ctx.translate(c.x, c.y);
+          const u = Math.max(0, Math.min(1, (c.timer - 52) / 90));
+          ctx.rotate((u - 0.5) * -0.9);
+          ctx.fillStyle = '#64748b';
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 44, 17, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Barbatana dorsal
+          ctx.beginPath();
+          ctx.moveTo(-8, -14);
+          ctx.lineTo(8, -32);
+          ctx.lineTo(14, -13);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          // Barriga clara e dentes
+          ctx.fillStyle = '#f8fafc';
+          ctx.beginPath();
+          ctx.ellipse(-6, 6, 30, 8, 0, 0, Math.PI);
+          ctx.fill();
+          ctx.fillStyle = '#0f172a';
+          ctx.beginPath();
+          ctx.arc(-26, -4, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+      } else if (c.type === 'lava_meteor') {
+        if (c.phase === 'warn') {
+          const targetX = (player ? player.x : 190) + 20;
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.35)';
+          ctx.beginPath();
+          ctx.ellipse(targetX, this.groundY + 2, 34, 8, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#fde047';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          this._drawCameoTag(ctx, targetX, this.groundY - 26, '! METEORO! PULE !', '#f97316');
+        } else {
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const halo = ctx.createRadialGradient(c.x, c.y, 4, c.x, c.y, 44);
+          halo.addColorStop(0, 'rgba(254, 240, 138, 0.8)');
+          halo.addColorStop(0.5, 'rgba(249, 115, 22, 0.45)');
+          halo.addColorStop(1, 'rgba(249, 115, 22, 0)');
+          ctx.fillStyle = halo;
+          ctx.fillRect(c.x - 44, c.y - 44, 88, 88);
+          ctx.restore();
+
+          ctx.fillStyle = '#7c2d12';
+          ctx.strokeStyle = '#fb923c';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, 24, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = '#fde047';
+          ctx.beginPath();
+          ctx.arc(c.x - 6, c.y - 5, 7, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+      } else if (c.type === 'penguin_slide') {
+        const cx = c.x + 29;
+        const cy = c.y + 22;
+        if (c.phase === 'warn') {
+          this._drawCameoTag(ctx, 1140, this.groundY - 56, '! PINGUIM! PULE !', '#38bdf8');
+        }
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+        ctx.beginPath();
+        ctx.ellipse(cx, this.groundY + 4, 28, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Corpo preto deitado + barriga branca deslizando no gelo
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#bae6fd';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 26, 13, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.ellipse(cx - 2, cy + 5, 19, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Cabeça + óculos neon + bico laranja
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(cx - 18, cy - 8, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath();
+        ctx.moveTo(cx - 27, cy - 8);
+        ctx.lineTo(cx - 35, cy - 6);
+        ctx.lineTo(cx - 27, cy - 3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = '#22d3ee';
+        ctx.fillRect(cx - 25, cy - 13, 11, 4.5);
+      }
+      ctx.restore();
+    }
   }
 
   drawDrone(ctx, o) {
@@ -4132,6 +5353,8 @@ class GameWorld {
     const metroW = this._biomeWeight(blend, 'metropolis');
     const beachW = this._biomeWeight(blend, 'beach');
     const cosmicW = this._biomeWeight(blend, 'cosmic');
+    const volcanoW = this._biomeWeight(blend, 'volcano');
+    const glacierW = this._biomeWeight(blend, 'glacier');
 
     // Clima ambiente por bioma (pool pré-alocado, zero GC, fade suave nas transições)
     ctx.save();
@@ -4201,6 +5424,31 @@ class GameWorld {
         ctx.fillStyle = `rgba(253, 186, 116, ${(m.alpha * 0.45 * sunsetW).toFixed(3)})`;
         ctx.beginPath();
         ctx.arc(m.x, m.y, m.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    if (volcanoW > 0.03) {
+      // Brasas laranja e amarelas subindo no Vulcão
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < this._ambientMotes.length; i++) {
+        const m = this._ambientMotes[i];
+        const rgb = i % 3 === 0 ? '254, 240, 138' : '249, 115, 22';
+        ctx.fillStyle = `rgba(${rgb}, ${(m.alpha * 0.65 * volcanoW).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.size * 1.05, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    if (glacierW > 0.03) {
+      // Flocos de neve suaves na Geleira
+      for (let i = 0; i < this._ambientMotes.length; i++) {
+        const m = this._ambientMotes[i];
+        ctx.fillStyle = `rgba(240, 249, 255, ${(m.alpha * 0.72 * glacierW).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.size * 1.15, 0, Math.PI * 2);
         ctx.fill();
       }
     }

@@ -6,35 +6,71 @@
 // ============================================================
 
 const PHYS = {
-  GRAVITY:        0.62,   // aceleração base por passo
-  APEX_GRAVITY:   0.54,   // leve hang-time perto do ápice (sem efeito balão)
-  APEX_THRESHOLD: 2.4,    // faixa de |vy| considerada ápice
-  FALL_GRAVITY:   0.76,   // gravidade firme na descida (peso real)
+  GRAVITY:        0.70,   // aceleração base por passo (pulo firme e ágil)
+  APEX_GRAVITY:   0.64,   // leve hang-time perto do ápice (sem flutuação exagerada)
+  APEX_THRESHOLD: 2.2,    // faixa de |vy| considerada ápice
+  FALL_GRAVITY:   0.90,   // gravidade firme na descida (peso real)
   FAST_FALL_ACC:  0.85,   // aceleração extra ao segurar Baixo/S no ar
   MAX_FALL:       20,     // velocidade terminal de queda
   MAX_FAST_FALL:  24,     // velocidade terminal em fast-fall
-  JUMP_VELOCITY: -14.2,   // ollie
-  GRIND_JUMP_VEL:-13.8,   // ollie saindo de um grind
+  JUMP_VELOCITY: -13.8,   // ollie ágil e preciso
+  GRIND_JUMP_VEL:-13.2,   // ollie saindo de um grind
   RAMP_VELOCITY: -16.6,   // lançamento realista de rampa
-  JUMP_CUT:      -7.2,    // velocidade mantida ao soltar a tecla cedo
+  JUMP_CUT:      -6.8,    // velocidade mantida ao soltar a tecla cedo
   MIN_JUMP_STEPS: 6,      // passos de subida garantidos antes do corte
   COYOTE_STEPS:   7,      // passos de tolerância após sair da borda
   BUFFER_STEPS:   7,      // passos de tolerância ao apertar pular antes de pousar
   SNAP_TOLERANCE: 8,      // folga para considerar "apoiado" na plataforma
-  BASE_SPEED:     6.0,
-  MAX_SPEED:      12.5,
-  ACCELERATION:   0.0016,
+  BASE_SPEED:     4.6,    // início calmo para pegar o ritmo da pista
+  MAX_SPEED:      11.6,   // velocidade de cruzeiro equilibrada
+  ACCELERATION:   0.0014, // aceleração gradual
   BRAKE_DECEL:    0.10,   // freio suave (nunca cai abaixo de BASE_SPEED)
   TURBO_FACTOR:   1.4,
   HOME_X:         190     // posição fixa do jogador na tela
 };
 
 const STAGES = [
-  { id: 'skatepark', name: 'Skatepark ao Pôr do Sol', dist: 0, nextDist: 600, icon: '🌇', theme: 'skatepark' },
-  { id: 'metropolis', name: 'Metrópole Cyberpunk Neon', dist: 600, nextDist: 1400, icon: '🏙️', theme: 'neon' },
-  { id: 'beach', name: 'Praia & Píer Tropical', dist: 1400, nextDist: 2400, icon: '🌴', theme: 'beach' },
-  { id: 'cosmic', name: 'Pista Cósmica das Estrelas', dist: 2400, nextDist: Infinity, icon: '🚀', theme: 'cosmic' }
+  { id: 'skatepark',  name: 'Skatepark ao Pôr do Sol',    dist: 0,    nextDist: 600,  icon: '🌇', theme: 'skatepark' },
+  { id: 'metropolis', name: 'Metrópole Cyberpunk Neon',   dist: 600,  nextDist: 1400, icon: '🏙️', theme: 'neon' },
+  { id: 'beach',      name: 'Praia & Píer Tropical',      dist: 1400, nextDist: 2400, icon: '🌴', theme: 'beach' },
+  { id: 'cosmic',     name: 'Pista Cósmica das Estrelas', dist: 2400, nextDist: 3500, icon: '🚀', theme: 'cosmic' },
+  { id: 'volcano',    name: 'Vulcão Magma Radical',       dist: 3500, nextDist: 4600, icon: '🌋', theme: 'volcano' },
+  { id: 'glacier',    name: 'Geleira Aurora Boreal',      dist: 4600, nextDist: 5700, icon: '❄️', theme: 'glacier' }
 ];
+
+const STAGE_TOUR_START = 5700;
+const STAGE_TOUR_SPAN = 1000;
+
+function getStageTimeline(dist = 0) {
+  const d = Math.max(0, Number(dist) || 0);
+  if (d < STAGE_TOUR_START) {
+    let idx = 0;
+    for (let i = STAGES.length - 1; i >= 0; i--) {
+      if (d >= STAGES[i].dist) {
+        idx = i;
+        break;
+      }
+    }
+    return {
+      stageIndex: idx,
+      nextStageIndex: (idx + 1) % STAGES.length,
+      segStart: STAGES[idx].dist,
+      segEnd: STAGES[idx].nextDist,
+      tourLap: 1,
+      milestoneCount: idx
+    };
+  }
+  const extra = Math.floor((d - STAGE_TOUR_START) / STAGE_TOUR_SPAN);
+  const stageIndex = extra % STAGES.length;
+  return {
+    stageIndex,
+    nextStageIndex: (stageIndex + 1) % STAGES.length,
+    segStart: STAGE_TOUR_START + extra * STAGE_TOUR_SPAN,
+    segEnd: STAGE_TOUR_START + (extra + 1) * STAGE_TOUR_SPAN,
+    tourLap: 2 + Math.floor(extra / STAGES.length),
+    milestoneCount: STAGES.length + extra
+  };
+}
 
 const TRICKS = [
   { key: 'KeyZ',  name: 'KICKFLIP',   pts: 250, targetAngle:  Math.PI * 2,   rotSpeed:  0.32, color: '#22d3ee', style: 'flip' },
@@ -180,6 +216,10 @@ class Player {
     this.rampProgress = 0;
     this.currentRamp = null;
     this.rampBoostBuffered = false;
+    this.isInLoop = false;
+    this.currentLoop = null;
+    this.loopAngle = 0;
+    this.loopsCompleted = 0;
     this.surfaceType = 'asphalt';
     this.coyoteTimer = PHYS.COYOTE_STEPS;
     this.jumpBuffer = 0;
@@ -208,6 +248,8 @@ class Player {
     const startStage = Math.max(0, Math.min(STAGES.length - 1, Math.floor(opts.startStageIndex || 0)));
     this.startedStageIndex = startStage;
     this.currentStageIndex = startStage;
+    this._stageMilestone = startStage;
+    this.tourLap = 1;
     this.score = 0;
     this.distance = startStage > 0 ? STAGES[startStage].dist : 0;
     this.startDistance = this.distance;
@@ -475,16 +517,21 @@ class Player {
     this.score += Math.max(1, Math.floor(this.speed * 0.05 * this.getDifficultyMult() * (this.feverTimer > 0 ? 2 : 1) * (this.doubleTimer > 0 ? 2 : 1)));
 
     this.checkStageProgression();
-    this.handleDuck(keys);
-    this.handleJumpInput(keys);
-    this.integrate(keys);
+    if (this.isInLoop) {
+      this.updateLoopMotion(world);
+      this.updateAnimation(world);
+    } else {
+      this.handleDuck(keys);
+      this.handleJumpInput(keys);
+      this.integrate(keys);
 
-    // A colisão acontece depois do movimento, usando varredura entre
-    // a posição anterior e a atual — nenhuma velocidade atravessa a pista.
-    this.resolveGroundCollision(world);
-    this.updateGroundBelow(world);
-    this.returnHome(world);
-    this.updateAnimation(world);
+      // A colisão acontece depois do movimento, usando varredura entre
+      // a posição anterior e a atual — nenhuma velocidade atravessa a pista.
+      this.resolveGroundCollision(world);
+      this.updateGroundBelow(world);
+      this.returnHome(world);
+      this.updateAnimation(world);
+    }
 
     // Emite rastro personalizado da Oficina (ou rastro extra no Modo Radical)
     if (window.particleSystem && window.particleSystem.emitCustomTrail) {
@@ -536,6 +583,9 @@ class Player {
         this.rampProgress = 0;
         this.currentRamp = null;
         this.rampBoostBuffered = false;
+        this.isInLoop = false;
+        this.currentLoop = null;
+        this.loopAngle = 0;
         this.isDucking = false;
         this.isFastFalling = false;
         this.trickState = null;
@@ -610,9 +660,11 @@ class Player {
   }
 
   checkStageProgression() {
-    const nextStage = STAGES[this.currentStageIndex + 1];
-    if (nextStage && this.distance >= nextStage.dist) {
-      this.currentStageIndex++;
+    const tl = getStageTimeline(this.distance);
+    if (tl.milestoneCount > this._stageMilestone) {
+      this._stageMilestone = tl.milestoneCount;
+      this.currentStageIndex = tl.stageIndex;
+      this.tourLap = tl.tourLap;
       const stage = STAGES[this.currentStageIndex];
 
       // Recompensa de fase: +1 vida (até o teto de 5) e +1000 pontos!
@@ -624,21 +676,22 @@ class Player {
       if (window.progressionManager && window.progressionManager.unlockStage) {
         window.progressionManager.unlockStage(this.currentStageIndex);
       }
-      this.notifyProgress('stage', 1, { stageIndex: this.currentStageIndex });
+      this.notifyProgress('stage', 1, { stageIndex: this.currentStageIndex, tourLap: this.tourLap });
 
       if (window.soundSystem && window.soundSystem.playStageClear) window.soundSystem.playStageClear();
       if (window.particleSystem && window.particleSystem.emitSparks) {
         window.particleSystem.emitSparks(this.x + this.width * 0.5, this.y, 40, '#22d3ee');
       }
       if (window.particleSystem && window.particleSystem.addFloatingText) {
+        const prefix = this.tourLap > 1 ? `VOLTA ${this.tourLap} · FASE ${this.currentStageIndex + 1}!` : `FASE ${this.currentStageIndex + 1}!`;
         const rewardText = gainedLife
-          ? `FASE ${this.currentStageIndex + 1}! +1 ${this.getSportLifeLabel()}`
-          : `FASE ${this.currentStageIndex + 1}! +1000 PTS`;
-        window.particleSystem.addFloatingText(rewardText, this.x + this.width * 0.5, this.y - 70, '#34d399', 28);
+          ? `${prefix} +1 ${this.getSportLifeLabel()}`
+          : `${prefix} +1000 PTS`;
+        window.particleSystem.addFloatingText(rewardText, this.x + this.width * 0.5, this.y - 70, '#34d399', 26);
       }
 
       if (window.game && window.game.onStageUnlocked) {
-        window.game.onStageUnlocked(stage);
+        window.game.onStageUnlocked(stage, this.tourLap);
       }
     }
   }
@@ -669,6 +722,10 @@ class Player {
     const wantsBrake = keys ? (Player.held(keys, 'ArrowLeft') || Player.held(keys, 'KeyA')) : false;
     this.isBraking = wantsBrake && !this.isAccelerating && this.turboTimer <= 0 && this.feverTimer <= 0;
 
+    // Nos primeiros 500m a pista aquece aos poucos para quem está começando pegar o ritmo
+    const warmupRatio = Math.max(0, Math.min(1, (this.sessionDistance || 0) / 500));
+    const warmupScale = 0.55 + 0.45 * warmupRatio;
+
     if (this.turboTimer > 0) {
       this.turboTimer--;
       this.speed = this.maxSpeed * PHYS.TURBO_FACTOR;
@@ -692,18 +749,19 @@ class Player {
         window.particleSystem.emitTurboTrail(this.x + 10, this.y + this.getCurrentHeight() * 0.55);
       }
     } else if (this.isAccelerating) {
-      // Remada/impulso forte! Aceleração com cadência rítmica e até 135% da velocidade máxima
-      const fastMax = this.maxSpeed * 1.35;
+      // Remada/impulso gradual: teto controlado no aquecimento e aceleração total após 500m
+      const fullFastMax = this.maxSpeed * 1.35;
+      const fastMax = this.baseSpeed + (fullFastMax - this.baseSpeed) * (0.42 + 0.58 * warmupRatio);
       const accelMult = (this.sport && this.sport.accelMult) || 1;
       const pushingGround = this.onGround && !this.isGrinding && !this.isOnRamp && !this.isDucking;
       this.isPushing = pushingGround;
-      let accel = 0.08 * accelMult;
+      let accel = 0.08 * accelMult * warmupScale;
       if (pushingGround) {
         const prevPhase = this.pushPhase;
         this.pushPhase = (this.pushPhase + 1 / 24) % 1;
         // Pico de impulso da remada no início do ciclo
         if (this.pushPhase < prevPhase || prevPhase === 0) {
-          accel += 0.14 * accelMult;
+          accel += 0.14 * accelMult * warmupScale;
           this.squashVel -= 0.018;
           this.emitEvent('push', { intensity: Math.min(1, this.speed / this.maxSpeed) });
           if (window.soundSystem && window.soundSystem.playPush) window.soundSystem.playPush();
@@ -719,7 +777,11 @@ class Player {
         this.pushPhase = 0;
       }
 
-      this.speed = Math.min(fastMax, this.speed + accel);
+      if (this.speed > fastMax) {
+        this.speed = Math.max(fastMax, this.speed - 0.06);
+      } else {
+        this.speed = Math.min(fastMax, this.speed + accel);
+      }
       if (this.onGround && Math.random() < 0.25 && window.particleSystem && window.particleSystem.emitSparks) {
         window.particleSystem.emitSparks(this.x + 15, this.bottom - 4, 1, '#fbbf24');
       }
@@ -745,7 +807,7 @@ class Player {
       if (this.speed > hardMax) {
         this.speed = Math.max(hardMax, this.speed - 0.06);
       } else {
-        this.speed = Math.min(hardMax, this.speed + PHYS.ACCELERATION * accelMult * diffAccel);
+        this.speed = Math.min(hardMax, this.speed + PHYS.ACCELERATION * accelMult * diffAccel * warmupScale);
       }
     }
   }
@@ -1156,6 +1218,19 @@ class Player {
     const bottom = this.bottom;
     const prevBottom = this.prevBottom;
 
+    // 0. Entrada em Looping 360° quando passa pelo portal inferior
+    const loops = Array.isArray(world.loops) ? world.loops : [];
+    const loopCenterX = this.x + this.width * 0.5;
+    if (loops.length > 0 && !this.isInLoop) {
+      for (const lp of loops) {
+        if (lp.entered || lp.completed) continue;
+        if (loopCenterX >= lp.cx - 24 && loopCenterX <= lp.cx + 28 && bottom >= world.groundY - 56 && this.vy >= -4) {
+          this.enterLoop(lp, world);
+          return;
+        }
+      }
+    }
+
     // 1. Verifica subida contínua e decolagem em rampas (curva pixel-perfect compartilhada)
     const ramps = Array.isArray(world.ramps) ? world.ramps : [];
     const rampProbeX = this.x + this.width * 0.55;
@@ -1417,6 +1492,133 @@ class Player {
     this.grindTicks = 0;
   }
 
+  enterLoop(loop, world) {
+    if (!loop) return;
+    if (this.isGrinding) this.endGrind();
+    this.isDucking = false;
+    this.isOnRamp = false;
+    this.currentRamp = null;
+    this.isOnElevated = false;
+    this.isFastFalling = false;
+    this.trickState = null;
+    this.trickProgress = 0;
+    this.rotation = 0;
+
+    loop.entered = true;
+    this.isInLoop = true;
+    this.currentLoop = loop;
+    const centerX = this.x + this.width * 0.5;
+    const dxRatio = Math.max(-0.22, Math.min(0.22, (centerX - loop.cx) / Math.max(40, loop.radius)));
+    this.loopAngle = Math.max(0, Math.asin(dxRatio));
+    this.vy = 0;
+    this.onGround = true;
+    this.doubleJumpAvailable = !!(this.sport && this.sport.airDoubleJump);
+    this.coyoteTimer = PHYS.COYOTE_STEPS;
+    this.airSteps = 0;
+    this.surfaceType = 'metal';
+    this.pitch = -this.loopAngle;
+    this.lean = this.pitch;
+    this.emitEvent('loop_enter', { intensity: 1.2, y: world ? world.groundY : this.bottom });
+    if (window.soundSystem && window.soundSystem.playLoopWhoosh) {
+      window.soundSystem.playLoopWhoosh();
+    }
+  }
+
+  getLoopBodyCenter() {
+    const h = this.getCurrentHeight();
+    if (!this.isInLoop || !this.currentLoop) {
+      return { x: this.x + this.width * 0.5, y: this.y + h * 0.5 };
+    }
+    const loop = this.currentLoop;
+    const footX = loop.cx + loop.radius * Math.sin(this.loopAngle);
+    const footY = loop.cy + loop.radius * Math.cos(this.loopAngle);
+    // Normal interna aponta para o centro do anel (-sin(theta), -cos(theta))
+    return {
+      x: footX - Math.sin(this.loopAngle) * (h * 0.45),
+      y: footY - Math.cos(this.loopAngle) * (h * 0.45)
+    };
+  }
+
+  updateLoopMotion(world) {
+    const loop = this.currentLoop;
+    if (!loop) {
+      this.isInLoop = false;
+      this.loopAngle = 0;
+      return;
+    }
+
+    const runSpd = Math.max(this.speed, this.maxSpeed * 0.92);
+    const omega = Math.max(0.135, Math.min(0.21, (runSpd / Math.max(60, loop.radius)) * 1.15));
+    this.loopAngle += omega;
+
+    if (this.loopAngle >= Math.PI * 2) {
+      this.exitLoop(world);
+      return;
+    }
+
+    const footX = loop.cx + loop.radius * Math.sin(this.loopAngle);
+    const footY = loop.cy + loop.radius * Math.cos(this.loopAngle);
+    this.x = footX - this.width * 0.5;
+    this.setBottom(footY);
+    this.prevBottom = this.bottom;
+    this.vy = 0;
+    this.onGround = true;
+    this.surfaceType = 'metal';
+    this.pitch = -this.loopAngle;
+    this.lean = this.pitch;
+    this.rotation = 0;
+    this.groundBelowY = footY;
+    this.airHeight = world ? Math.max(0, world.groundY - footY) : 0;
+
+    if (this.animTime % 2 === 0 && window.particleSystem && window.particleSystem.emitSparks) {
+      window.particleSystem.emitSparks(footX, footY, 1, '#22d3ee');
+    }
+    this.trail.push({ x: this.x, y: this.y, rot: this.pitch, life: 1 });
+    if (this.trail.length > 6) this.trail.shift();
+  }
+
+  exitLoop(world) {
+    const loop = this.currentLoop;
+    if (loop) loop.completed = true;
+    this.isInLoop = false;
+    this.currentLoop = null;
+    this.loopAngle = 0;
+
+    this.x = loop ? Math.max(PHYS.HOME_X, loop.cx - this.width * 0.5) : PHYS.HOME_X;
+    this.setBottom(world ? world.groundY : this.bottom);
+    this.prevBottom = this.bottom;
+    this.vy = 0;
+    this.onGround = true;
+    this.pitch = 0;
+    this.lean = 0;
+    this.rotation = 0;
+    this.groundBelowY = this.bottom;
+    this.airHeight = 0;
+    this.trail.length = 0;
+
+    this.speed = Math.min(this.maxSpeed * 1.35, Math.max(this.speed + 2.2, this.maxSpeed * 1.16));
+    this.invincibleTimer = Math.max(this.invincibleTimer, 45);
+    this.loopsCompleted = (this.loopsCompleted || 0) + 1;
+
+    const pts = this.addScore(450);
+    this.addFever(24);
+    this.notifyProgress('loop', 1);
+    this.emitEvent('loop_complete', { intensity: 1.4, y: this.bottom });
+
+    if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
+    if (window.particleSystem) {
+      if (window.particleSystem.emitShockwave) {
+        window.particleSystem.emitShockwave(this.x + this.width * 0.5, this.bottom, '#22d3ee', 110);
+      }
+      if (window.particleSystem.emitSparks) {
+        window.particleSystem.emitSparks(this.x + this.width * 0.5, this.bottom, 26, '#22d3ee');
+      }
+      if (window.particleSystem.addFloatingText) {
+        window.particleSystem.addFloatingText(`LOOPING 360°! +${pts}`, this.x + this.width * 0.5, this.y - 68, '#22d3ee', 28);
+      }
+    }
+  }
+
   detectSurfaceType(platform, world) {
     if (platform && platform.surfaceType) return platform.surfaceType;
     if (platform && platform.isBreakable && platform.triggered) return 'breakable';
@@ -1427,6 +1629,7 @@ class Player {
     const stage = STAGES[this.currentStageIndex];
     if (stage && stage.id === 'beach') return 'wood';
     if (stage && stage.id === 'cosmic') return 'cosmic';
+    if (stage && stage.id === 'glacier') return 'ice';
     return 'asphalt';
   }
 
@@ -1592,8 +1795,8 @@ class Player {
     this.squash = Math.max(0.65, Math.min(1.28, this.squash + this.squashVel));
     this.stretchX = 1 + (1 - this.squash) * 0.58;
 
-    // Inclinação física (pitch) acompanhando rampa, remada, freio, grind e trajetória aérea
-    if (!this.isOnRamp) {
+    // Inclinação física (pitch) acompanhando rampa, looping, remada, freio, grind e trajetória aérea
+    if (!this.isOnRamp && !this.isInLoop) {
       let targetPitch = 0.04;
       if (!this.onGround) {
         targetPitch = Math.max(-0.42, Math.min(0.36, this.vy * 0.022));
@@ -1618,11 +1821,12 @@ class Player {
     if (this.onGround) {
       this.wheelPhase += this.speed * 0.085;
       let amp = 1.3;
-      if (this.isOnRamp) amp = 0.6;
+      if (this.isOnRamp || this.isInLoop) amp = 0.6;
       else if (this.surfaceType === 'wood') amp = 2.0;
       else if (this.surfaceType === 'metal') amp = 0.9;
       else if (this.surfaceType === 'breakable') amp = 2.4;
       else if (this.surfaceType === 'cosmic') amp = 0.8;
+      else if (this.surfaceType === 'ice') amp = 0.55;
       this.bob = Math.sin(this.wheelPhase) * amp;
     } else {
       this.bob = 0;
@@ -1810,8 +2014,12 @@ class Player {
   }
 
   getActiveAccessory(char) {
-    if (window.progressionManager && typeof window.progressionManager.getEquippedAccessory === 'function') {
-      const shopAcc = window.progressionManager.getEquippedAccessory();
+    const pm = window.progressionManager;
+    if (pm && typeof pm.getEquippedAccessory === 'function') {
+      if (char && typeof pm.hasProfile === 'function' && pm.hasProfile(char.id)) {
+        return pm.getEquippedAccessory();
+      }
+      const shopAcc = pm.getEquippedAccessory();
       if (shopAcc && shopAcc !== 'none') return shopAcc;
     }
     return (char && char.accessory) || 'none';
@@ -2048,11 +2256,25 @@ class Player {
     const spriteFootY = this.bottom + this.bob * 0.35;
     const centerX = this.x + this.width * 0.5;
 
-    // Sombra de contato — ancora o personagem na superfície sólida real abaixo
-    this.drawContactShadow(ctx, centerX, baseFootY);
+    // Sombra de contato — ancora o personagem na superfície sólida real abaixo (oculta dentro do looping)
+    if (!this.isInLoop) {
+      this.drawContactShadow(ctx, centerX, baseFootY);
+      this.drawBacklight(ctx, centerX, baseFootY);
+    }
 
-    // Contraluz integrada ao bioma atual
-    this.drawBacklight(ctx, centerX, baseFootY);
+    const drawAuras = (ax, afy) => {
+      let cxAura = ax;
+      let fyAura = afy;
+      if (this.isInLoop) {
+        const lc = this.getLoopBodyCenter();
+        cxAura = lc.x;
+        fyAura = lc.y + this.getCurrentHeight() * 0.5;
+      }
+      if (this.hasShield) this.drawShield(ctx, cxAura, fyAura);
+      if (this.magnetTimer > 0) this.drawMagnetAura(ctx, cxAura, fyAura);
+      if (this.turboTimer > 0) this.drawTurboAura(ctx, cxAura, fyAura);
+      if (this.feverTimer > 0) this.drawFeverAura(ctx, cxAura, fyAura);
+    };
 
     // Pisca durante a invencibilidade, mas nunca some por completo
     const blinking = this.invincibleTimer > 0 && Math.floor(this.invincibleTimer / 4) % 2 === 0;
@@ -2063,7 +2285,7 @@ class Player {
     const isSpriteOnly = char.bodyStyle === 'sprite' || char.fullPhoto;
     const rig = (cm && typeof cm.getRigParts === 'function') ? cm.getRigParts() : null;
     if (!isSpriteOnly && (isCustomRig || (rig && rig.ready))) {
-      // Rastro sutil em alta velocidade / turbo / Super Flip
+      // Rastro sutil em alta velocidade / turbo / Super Flip / Looping
       for (const ghost of this.trail) {
         ctx.save();
         ctx.globalAlpha = ghost.life * 0.16;
@@ -2077,10 +2299,7 @@ class Player {
       this.drawCutoutRig(ctx, char, rig, centerX, baseFootY, false);
       ctx.restore();
 
-      if (this.hasShield) this.drawShield(ctx, centerX, baseFootY);
-      if (this.magnetTimer > 0) this.drawMagnetAura(ctx, centerX, baseFootY);
-      if (this.turboTimer > 0) this.drawTurboAura(ctx, centerX, baseFootY);
-      if (this.feverTimer > 0) this.drawFeverAura(ctx, centerX, baseFootY);
+      drawAuras(centerX, baseFootY);
       return;
     }
 
@@ -2146,10 +2365,7 @@ class Player {
 
     ctx.restore();
 
-    if (this.hasShield) this.drawShield(ctx, centerX, footY);
-    if (this.magnetTimer > 0) this.drawMagnetAura(ctx, centerX, footY);
-    if (this.turboTimer > 0) this.drawTurboAura(ctx, centerX, footY);
-    if (this.feverTimer > 0) this.drawFeverAura(ctx, centerX, footY);
+    drawAuras(centerX, footY);
   }
 
   /**
@@ -2548,7 +2764,8 @@ class Player {
       ctx.rotate(grabTilt);
       ctx.translate(0, 56);
     } else {
-      ctx.rotate(this.pitch);
+      const pitchRot = (isGhost && this.isInLoop && ghostRot !== null && ghostRot !== undefined) ? ghostRot : this.pitch;
+      ctx.rotate(pitchRot);
     }
 
     // 4a. Equipamento traseiro (BMX / Patinete — com giro real de TAILWHIP!)
@@ -3481,3 +3698,4 @@ window.Player = Player;
 window.PHYS = PHYS;
 window.SPORTS = SPORTS;
 window.STAGES = STAGES;
+window.getStageTimeline = getStageTimeline;

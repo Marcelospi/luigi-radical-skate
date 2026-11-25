@@ -283,6 +283,11 @@ class SoundSystem {
       freqSpan = 740;
       qVal = 2.0;
       gainScale = 0.18;
+    } else if (surfaceType === 'ice') {
+      baseFreq = 680;
+      freqSpan = 680;
+      qVal = 2.1;
+      gainScale = 0.16;
     } else if (surfaceType === 'breakable') {
       baseFreq = 420;
       freqSpan = 620;
@@ -1235,8 +1240,86 @@ class SoundSystem {
     osc.stop(now + (isGo ? 0.24 : 0.14));
   }
 
+  /** Som de impulso circular ao entrar num Looping 360°. */
+  playLoopWhoosh() {
+    if (this.muted || this.sfxVolume <= 0.001 || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(920, now + 0.34);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.22, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.40);
+    osc.connect(gain);
+    gain.connect(this.output());
+    osc.start(now);
+    osc.stop(now + 0.42);
+  }
+
+  /** Efeito curto ao surgir uma aparição rara (cachorro, guarda, OVNI, etc.). */
+  playCameoAlert(type = '') {
+    if (this.muted || this.sfxVolume <= 0.001 || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (type === 'dog_chase') {
+      [0, 0.11].forEach((off, i) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(i === 0 ? 340 : 410, now + off);
+        osc.frequency.exponentialRampToValueAtTime(175, now + off + 0.08);
+        gain.gain.setValueAtTime(0.14, now + off);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + off + 0.09);
+        osc.connect(gain);
+        gain.connect(this.output());
+        osc.start(now + off);
+        osc.stop(now + off + 0.10);
+      });
+    } else if (type === 'police_chase') {
+      [0, 0.10].forEach((off) => {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(2150, now + off);
+        osc.frequency.setValueAtTime(2480, now + off + 0.04);
+        gain.gain.setValueAtTime(0.10, now + off);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + off + 0.08);
+        osc.connect(gain);
+        gain.connect(this.output());
+        osc.start(now + off);
+        osc.stop(now + off + 0.09);
+      });
+    } else if (type === 'ufo_beam') {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(620, now);
+      osc.frequency.linearRampToValueAtTime(980, now + 0.16);
+      osc.frequency.linearRampToValueAtTime(520, now + 0.34);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(now);
+      osc.stop(now + 0.38);
+    } else {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(480, now);
+      osc.frequency.exponentialRampToValueAtTime(760, now + 0.18);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain);
+      gain.connect(this.output());
+      osc.start(now);
+      osc.stop(now + 0.24);
+    }
+  }
+
   setMusicContext(stageIndex = 0, boosted = false) {
-    this.musicStage = Math.max(0, Math.min(3, Math.floor(stageIndex || 0)));
+    this.musicStage = Math.max(0, Math.floor(stageIndex || 0)) % 6;
     this.musicBoosted = !!boosted;
   }
 
@@ -1293,6 +1376,20 @@ class SoundSystem {
         lead: [659.25, 830.61, 987.77, 1318.5, 587.33, 783.99, 987.77, 1174.66, 659.25, 880, 1046.5, 1318.5, 783.99, 987.77, 1174.66, 1567.98],
         wave: 'triangle',
         stepMs: 142
+      },
+      // Fase 5: Vulcão Magma Radical (Rock / energia pesada)
+      {
+        bass: [92.50, 92.50, 110, 123.47, 92.50, 92.50, 146.83, 123.47, 82.41, 82.41, 110, 123.47, 146.83, 123.47, 110, 92.50],
+        lead: [369.99, 0, 440, 493.88, 554.37, 0, 493.88, 440, 329.63, 0, 440, 554.37, 659.25, 554.37, 493.88, 440],
+        wave: 'sawtooth',
+        stepMs: 138
+      },
+      // Fase 6: Geleira Aurora Boreal (Cristalino ártico)
+      {
+        bass: [130.81, 0, 196.0, 0, 146.83, 0, 220.0, 0, 164.81, 0, 246.94, 0, 146.83, 196.0, 220.0, 0],
+        lead: [783.99, 987.77, 1174.66, 1318.5, 987.77, 1174.66, 1567.98, 1318.5, 880, 1046.5, 1318.5, 1567.98, 1174.66, 987.77, 783.99, 659.25],
+        wave: 'sine',
+        stepMs: 146
       }
     ];
 

@@ -22,6 +22,9 @@ const SKATE_CUT_LINES = {
   trick: { x1: 0.48, y1: 0.92, x2: 0.90, y2: 0.44 }
 };
 
+const HIDDEN_BUILTINS_KEY = 'luigi_hidden_builtin_chars_v1';
+const BUILTIN_OVERRIDES_KEY = 'luigi_builtin_char_overrides_v1';
+
 const CHAR_CUSTOMIZATION = {
   SKIN_TONES: [
     { id: 'light',  name: 'Claro',        hex: '#fde2c8', shadow: '#e4b892' },
@@ -71,6 +74,7 @@ function getHairPalette(id) {
 class CharacterManager {
   constructor() {
     this.characters = [];
+    this._rawBuiltins = [];
     this.selectedId = 'luigi_3d';
     this.loadedImages = {};
     this.loadedHeads = {};
@@ -79,6 +83,7 @@ class CharacterManager {
     this.lastStorageError = null;
     this.riderCache = {};
     this.scaleCache = {};
+    this.onCharacterChange = null;
     this.rigParts = {
       ready: false,
       head: null,
@@ -189,8 +194,29 @@ class CharacterManager {
       this.characters = this._defaultBuiltins();
     }
 
-    this.characters = this.characters.map(char => this.normalizeCharacter(char));
+    this._rawBuiltins = (this.characters || []).map(c => this.normalizeCharacter({ ...c }));
+    const overrides = this._loadBuiltinOverrides();
+    this.characters = this.characters.map(char => {
+      const ov = overrides[char.id];
+      return ov
+        ? this.normalizeCharacter({ ...char, ...ov, id: char.id, isCustom: false })
+        : this.normalizeCharacter(char);
+    });
     this.loadCustomCharacters();
+
+    const hiddenSet = new Set(this._loadHiddenBuiltins());
+    if (hiddenSet.size > 0) {
+      const visible = this.characters.filter(c => c.isCustom || !hiddenSet.has(c.id));
+      const hasUnlocked = visible.some(c => this.isCharacterUnlocked(c.id));
+      if (hasUnlocked) {
+        this.characters = visible;
+      } else {
+        const firstUnlockedBuiltin = this.characters.find(c => !c.isCustom && this.isCharacterUnlocked(c.id));
+        if (firstUnlockedBuiltin) {
+          this.characters = this.characters.filter(c => c.isCustom || !hiddenSet.has(c.id) || c.id === firstUnlockedBuiltin.id);
+        }
+      }
+    }
 
     // Recuperar seleção anterior com fallback seguro (respeitando bloqueio de personagem pago)
     try {
@@ -209,6 +235,9 @@ class CharacterManager {
     ]);
 
     this.ensureGeneratedHeadsAndPortraits();
+    if (window.progressionManager && typeof window.progressionManager.setActiveProfile === 'function') {
+      window.progressionManager.setActiveProfile(this.selectedId, this.getSelected());
+    }
   }
 
   isCharacterUnlocked(id) {
@@ -349,30 +378,102 @@ class CharacterManager {
       || err.code === 1014;
   }
 
-  saveCustomCharacters() {
-    this.lastStorageError = null;
-    const customOnly = this.characters.filter(c => c.isCustom);
+  _loadHiddenBuiltins() {
     try {
-      const payload = customOnly.map(c => this._serializeCustomForStorage(c, false));
-      localStorage.setItem('luigi_custom_characters', JSON.stringify(payload));
+      const raw = localStorage.getItem(HIDDEN_BUILTINS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(id => typeof id === 'string' && id) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  _removeStorageKey(key) {
+    try {
+      if (typeof localStorage.removeItem === 'function') localStorage.removeItem(key);
+      else localStorage.setItem(key, '');
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  _saveHiddenBuiltins(list) {
+    try {
+      const clean = Array.from(new Set((list || []).filter(id => typeof id === 'string' && id)));
+      if (clean.length === 0) return this._removeStorageKey(HIDDEN_BUILTINS_KEY);
+      localStorage.setItem(HIDDEN_BUILTINS_KEY, JSON.stringify(clean));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  _loadBuiltinOverrides() {
+    try {
+      const raw = localStorage.getItem(BUILTIN_OVERRIDES_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  _saveWithQuotaFallback(storageKey, buildPayload, warnLabel) {
+    this.lastStorageError = null;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(buildPayload(false)));
       return { ok: true };
     } catch (e) {
       if (this._isQuotaError(e)) {
-        // 2ª tentativa: compacta fotos dos avatares customizados para caber na cota do navegador
+        // 2ª tentativa: compacta fotos em WebP/JPEG leve para caber na cota do navegador
         try {
-          const compactPayload = customOnly.map(c => this._serializeCustomForStorage(c, true));
-          localStorage.setItem('luigi_custom_characters', JSON.stringify(compactPayload));
+          localStorage.setItem(storageKey, JSON.stringify(buildPayload(true)));
           return { ok: true, compacted: true };
         } catch (e2) {
           this.lastStorageError = 'quota_exceeded';
-          console.warn('Cota do localStorage cheia ao salvar personagens customizados', e2);
+          console.warn(`Cota do localStorage cheia ao salvar ${warnLabel}`, e2);
           return { ok: false, reason: 'quota_exceeded' };
         }
       }
       this.lastStorageError = 'storage_error';
-      console.warn('Erro ao salvar personagens customizados', e);
+      console.warn(`Erro ao salvar ${warnLabel}`, e);
       return { ok: false, reason: 'storage_error' };
     }
+  }
+
+  _saveBuiltinOverrides(map) {
+    const entries = Object.entries(map || {});
+    if (entries.length === 0) {
+      this._removeStorageKey(BUILTIN_OVERRIDES_KEY);
+      return { ok: true };
+    }
+    return this._saveWithQuotaFallback(BUILTIN_OVERRIDES_KEY, (compact) => {
+      const out = {};
+      for (const [id, ov] of entries) {
+        const copy = { ...ov };
+        if (!copy.hasPhoto && !copy.fullPhoto) {
+          copy.headSprite = '';
+          copy.portrait = '';
+          if (copy.sprites) copy.sprites = { skate: '', duck: '', jump: '', trick: '' };
+          out[id] = copy;
+        } else {
+          out[id] = this._serializeCustomForStorage(copy, compact);
+        }
+      }
+      return out;
+    }, 'personalização de personagens originais');
+  }
+
+  saveCustomCharacters() {
+    const customOnly = this.characters.filter(c => c.isCustom);
+    return this._saveWithQuotaFallback(
+      'luigi_custom_characters',
+      (compact) => customOnly.map(c => this._serializeCustomForStorage(c, compact)),
+      'personagens customizados'
+    );
   }
 
   getCharacter(id) {
@@ -389,9 +490,20 @@ class CharacterManager {
       try {
         localStorage.setItem('luigi_selected_char', id);
       } catch (e) {}
+      if (window.progressionManager && typeof window.progressionManager.setActiveProfile === 'function') {
+        window.progressionManager.setActiveProfile(id, this.getSelected());
+      }
       return true;
     }
     return false;
+  }
+
+  _notifyChange(action, payload = null) {
+    if (typeof this.onCharacterChange === 'function') {
+      try {
+        this.onCharacterChange(action, payload);
+      } catch (_) {}
+    }
   }
 
   async preloadAllSprites() {
@@ -421,8 +533,8 @@ class CharacterManager {
         }
       }
 
-      // Pré-carrega headSprite de personagens customizados
-      const headSrc = char.headSprite || (char.isCustom && !char.fullPhoto ? char.portrait : null);
+      // Pré-carrega headSprite de personagens customizados ou originais customizados com foto
+      const headSrc = char.headSprite || ((!char.fullPhoto && (char.isCustom || (char.bodyStyle === 'custom' && char.hasPhoto))) ? char.portrait : null);
       if (headSrc && !this.loadedHeads[char.id]) {
         promises.push(new Promise((resolve) => {
           const img = new Image();
@@ -452,6 +564,7 @@ class CharacterManager {
   ensureGeneratedHeadsAndPortraits() {
     if (typeof document === 'undefined') return;
     for (const char of this.characters) {
+      if (char.id === 'luigi_3d' && char.hasPhoto && this.rigParts.head) continue;
       if (char.bodyStyle === 'custom' && !this.loadedHeads[char.id] && (!char.hasPhoto || this._failedHeads[char.id] || !char.headSprite)) {
         const canvas = this.composeIllustratedHeadCanvas({
           skinTone: char.skinTone,
@@ -476,8 +589,10 @@ class CharacterManager {
 
   getHeadImage(charId) {
     if (this.loadedHeads[charId]) return this.loadedHeads[charId];
-    if (charId === 'luigi_3d' && this.rigParts.head) return this.rigParts.head;
     const char = this.getCharacter(charId);
+    if (charId === 'luigi_3d' && this.rigParts.head && (!char || char.bodyStyle === 'rig' || char.hasPhoto)) {
+      return this.rigParts.head;
+    }
     if (char && char.bodyStyle === 'custom' && (!char.hasPhoto || this._failedHeads[charId] || !char.headSprite) && typeof document !== 'undefined') {
       const c = this.composeIllustratedHeadCanvas({
         skinTone: char.skinTone,
@@ -953,9 +1068,12 @@ class CharacterManager {
       return this.safeToDataUrl(c, (validImg && validImg.src) || '');
     }
 
+    const preHead = options.precomposedHead && this._isDrawableImage(options.precomposedHead)
+      ? options.precomposedHead
+      : null;
     const headCanvas = validImg
       ? this.composeHeadSpriteCanvas(validImg, options)
-      : this.composeIllustratedHeadCanvas(options);
+      : (preHead || this.composeIllustratedHeadCanvas(options));
 
     // Chão sutil + sombra
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -963,8 +1081,17 @@ class CharacterManager {
     ctx.ellipse(120, 214, 62, 10, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Skate na base
-    ctx.fillStyle = outfit.topAccent;
+    // Skate na base (respeita tema de equipamento da Oficina quando informado)
+    const gt = options.gearTheme && typeof options.gearTheme === 'object' ? options.gearTheme : null;
+    if (gt) {
+      const deckGrad = ctx.createLinearGradient(62, 0, 178, 0);
+      deckGrad.addColorStop(0, gt.secondary || outfit.top);
+      deckGrad.addColorStop(0.5, gt.primary || outfit.topAccent);
+      deckGrad.addColorStop(1, gt.accent || outfit.topAccent);
+      ctx.fillStyle = deckGrad;
+    } else {
+      ctx.fillStyle = outfit.topAccent;
+    }
     ctx.beginPath();
     ctx.roundRect ? ctx.roundRect(62, 194, 116, 11, 5) : ctx.fillRect(62, 194, 116, 11);
     ctx.fill();
@@ -975,7 +1102,7 @@ class CharacterManager {
       ctx.beginPath();
       ctx.arc(wx, 209, 6.5, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = outfit.top;
+      ctx.fillStyle = (gt && gt.accent) ? gt.accent : outfit.top;
       ctx.beginPath();
       ctx.arc(wx, 209, 2.5, 0, Math.PI * 2);
       ctx.fill();
@@ -1091,7 +1218,10 @@ class CharacterManager {
 
     // Acessório na prévia
     if (acc && acc !== 'none' && window.Player && typeof window.Player.drawHeadAccessoryStatic === 'function') {
-      window.Player.drawHeadAccessoryStatic(ctx, 0, -80, hs, acc, 0);
+      window.Player.drawHeadAccessoryStatic(ctx, 0, -80, hs, acc, 0, {
+        useHelmet: options.useHelmet !== false,
+        isIllustrated: !validImg && !preHead
+      });
     }
 
     // Braço dianteiro (manga da camiseta + antebraço na cor da pele)
@@ -1102,9 +1232,57 @@ class CharacterManager {
     return this.safeToDataUrl(c, '');
   }
 
-  /** Cria um novo personagem (com foto ou avatar ilustrado customizado). */
-  async createCustomCharacterFromImage(fileOrImg, name, options = {}) {
-    const loadRawImg = () => new Promise((resolve, reject) => {
+  /** Prévia dedicada do Closet ("Meus Itens") combinando personagem, capacete, acessório e pintura. */
+  buildClosetPreview(char, { gearTheme = null, accessory = 'none' } = {}) {
+    if (!char) return 'assets/portraits/portrait_luigi_3d.png';
+    if (char.fullPhoto || char.bodyStyle === 'sprite') {
+      const sp = this.getSprite(char.id, 'skate');
+      if (sp && this._isDrawableImage(sp) && typeof document !== 'undefined') {
+        try {
+          const c = document.createElement('canvas');
+          c.width = 240;
+          c.height = 240;
+          const ctx = c.getContext('2d');
+          const iw = sp.naturalWidth || sp.width || 160;
+          const ih = sp.naturalHeight || sp.height || 160;
+          const ratio = Math.min(180 / iw, 188 / ih);
+          const dw = iw * ratio;
+          const dh = ih * ratio;
+          ctx.drawImage(sp, (240 - dw) * 0.5, 214 - dh, dw, dh);
+          if (gearTheme && gearTheme.primary) {
+            const g = ctx.createLinearGradient(56, 0, 184, 0);
+            g.addColorStop(0, gearTheme.secondary || gearTheme.primary);
+            g.addColorStop(0.5, gearTheme.primary);
+            g.addColorStop(1, gearTheme.accent || gearTheme.primary);
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.roundRect ? ctx.roundRect(56, 222, 128, 7, 3.5) : ctx.fillRect(56, 222, 128, 7);
+            ctx.fill();
+          }
+          const url = this.safeToDataUrl(c, '');
+          if (url) return url;
+        } catch (_) {}
+      }
+      return char.portrait || 'assets/portraits/portrait_luigi_3d.png';
+    }
+
+    const headImg = this.getHeadImage(char.id);
+    const dataUrl = this.buildFullBodyPreview(null, {
+      gender: char.gender || 'boy',
+      skinTone: char.skinTone || 'fair',
+      outfit: char.outfit || 'street_blue',
+      hairColor: char.hairColor || 'brown',
+      headSize: char.bodyStyle === 'rig' ? 'normal' : (char.headSize || 'large'),
+      useHelmet: char.useHelmet !== false,
+      accessory: accessory || 'none',
+      gearTheme,
+      precomposedHead: headImg
+    });
+    return dataUrl || char.portrait || 'assets/portraits/portrait_luigi_3d.png';
+  }
+
+  _resolveRawImage(fileOrImg) {
+    return new Promise((resolve, reject) => {
       if (!fileOrImg) {
         resolve(null);
         return;
@@ -1127,8 +1305,11 @@ class CharacterManager {
       reader.onerror = () => reject(new Error('Erro ao ler o arquivo de imagem.'));
       reader.readAsDataURL(fileOrImg);
     });
+  }
 
-    const rawImg = await loadRawImg();
+  /** Cria um novo personagem (com foto ou avatar ilustrado customizado). */
+  async createCustomCharacterFromImage(fileOrImg, name, options = {}) {
+    const rawImg = await this._resolveRawImage(fileOrImg);
     const validImg = this._isDrawableImage(rawImg) ? rawImg : null;
     const charId = 'custom_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     const fullPhoto = !!(options.fullPhoto && validImg);
@@ -1189,6 +1370,7 @@ class CharacterManager {
     await this.preloadAllSprites();
     this.ensureGeneratedHeadsAndPortraits();
     this.select(charId);
+    this._notifyChange('create', newChar);
     return newChar;
   }
 
@@ -1245,9 +1427,242 @@ class CharacterManager {
     };
   }
 
-  deleteCustomCharacter(id) {
+  /** Edita nome, estilo/roupa, acessório ou foto de qualquer personagem (criado ou original). */
+  async updateCharacter(id, fileOrImg, name, options = {}) {
+    const idx = this.characters.findIndex(c => c.id === id);
+    if (idx === -1) {
+      return this.createCustomCharacterFromImage(fileOrImg, name, options);
+    }
+
+    const existing = this.characters[idx];
+    const rawImg = await this._resolveRawImage(fileOrImg);
+    const validNewImg = this._isDrawableImage(rawImg) ? rawImg : null;
+    const clearPhoto = !!options.clearPhoto;
+    const useHelmet = options.useHelmet !== false;
+    const gender = options.gender || existing.gender || 'boy';
+    const skinTone = options.skinTone || existing.skinTone || 'fair';
+    const outfit = options.outfit || existing.outfit || 'street_blue';
+    const hairColor = options.hairColor || existing.hairColor || 'brown';
+    const accessory = options.accessory || existing.accessory || 'none';
+    const headSize = options.headSize || existing.headSize || 'large';
+    const genderObj = CHAR_CUSTOMIZATION.GENDERS.find(g => g.id === gender) || CHAR_CUSTOMIZATION.GENDERS[0];
+    const safeName = String(name || '').trim().slice(0, 24) || existing.name || 'Skatista Radical';
+
+    let bodyStyle = existing.bodyStyle;
+    let fullPhoto = !!existing.fullPhoto;
+    let hasPhoto = !!existing.hasPhoto;
+    let headSprite = existing.headSprite || '';
+    let portrait = existing.portrait || '';
+    let sprites = existing.sprites ? { ...existing.sprites } : { skate: '', duck: '', jump: '', trick: '' };
+
+    if (validNewImg) {
+      hasPhoto = true;
+      fullPhoto = !!options.fullPhoto;
+      bodyStyle = fullPhoto ? 'sprite' : 'custom';
+      const headCanvas = this.composeHeadSpriteCanvas(validNewImg, { ...options, outfit, useHelmet });
+      headSprite = this.safeToDataUrl(headCanvas, validNewImg.src || '', true);
+      portrait = headSprite;
+      sprites = fullPhoto
+        ? this.generateSpritesFromCanvas(validNewImg, { faceFlipX: !!options.faceFlipX })
+        : { skate: '', duck: '', jump: '', trick: '' };
+      delete this.loadedImages[id];
+      delete this._failedHeads[id];
+      this.loadedHeads[id] = headCanvas;
+    } else if (clearPhoto) {
+      hasPhoto = false;
+      fullPhoto = false;
+      bodyStyle = 'custom';
+      const headCanvas = this.composeIllustratedHeadCanvas({ skinTone, gender, hairColor, outfit, useHelmet });
+      headSprite = this.safeToDataUrl(headCanvas, '', true);
+      portrait = headSprite;
+      sprites = { skate: '', duck: '', jump: '', trick: '' };
+      delete this.loadedImages[id];
+      delete this._failedHeads[id];
+      this.loadedHeads[id] = headCanvas;
+    } else if (existing.isCustom || existing.bodyStyle === 'custom') {
+      if (!hasPhoto) {
+        bodyStyle = 'custom';
+        fullPhoto = false;
+        const headCanvas = this.composeIllustratedHeadCanvas({ skinTone, gender, hairColor, outfit, useHelmet });
+        headSprite = this.safeToDataUrl(headCanvas, existing.portrait || '', true);
+        portrait = headSprite;
+        delete this._failedHeads[id];
+        this.loadedHeads[id] = headCanvas;
+      } else {
+        fullPhoto = !!(options.fullPhoto && existing.fullPhoto);
+        bodyStyle = fullPhoto ? 'sprite' : 'custom';
+      }
+    } else if (options.customizedBody) {
+      bodyStyle = 'custom';
+      fullPhoto = false;
+      hasPhoto = true;
+      delete this.loadedHeads[id];
+      headSprite = id === 'luigi_3d' ? '' : (existing.portrait || headSprite);
+    }
+
+    let badge = existing.badge;
+    let description = existing.description;
+    let stats = existing.stats ? { ...existing.stats } : { visual: 'Custom', favorito: '🌟 Todos', estilo: 'Radical' };
+    if (existing.isCustom) {
+      badge = fullPhoto ? 'Foto Inteira!' : (hasPhoto ? `${genderObj.icon} Foto Radical!` : `${genderObj.icon} Avatar Customizado`);
+      description = fullPhoto
+        ? 'Personagem criado com sua foto inteira na pista!'
+        : (hasPhoto
+          ? 'Personagem articulado com seu rosto grande, cor de pele, roupa e estilo próprios!'
+          : 'Avatar ilustrado com cor de pele, cabelo, roupa e acessório do seu jeito!');
+      stats = {
+        visual: fullPhoto ? 'Foto 2D' : (hasPhoto ? 'Rig Foto' : 'Avatar 2D'),
+        favorito: stats.favorito || '🌟 Todos',
+        estilo: stats.estilo || 'Exclusivo'
+      };
+    } else if (validNewImg || clearPhoto || options.customizedBody) {
+      stats = {
+        ...stats,
+        visual: fullPhoto ? 'Foto 2D' : (hasPhoto ? 'Rig Custom' : 'Avatar 2D')
+      };
+    }
+
+    const updatedChar = this.normalizeCharacter({
+      ...existing,
+      id,
+      name: safeName,
+      badge,
+      description,
+      isCustom: !!existing.isCustom,
+      bodyStyle,
+      fullPhoto,
+      useHelmet,
+      hasPhoto,
+      gender,
+      skinTone,
+      outfit,
+      hairColor,
+      accessory,
+      headSize,
+      headSprite,
+      portrait,
+      sprites,
+      stats
+    });
+
+    this.characters[idx] = updatedChar;
+    for (const k of Object.keys(this.riderCache)) {
+      if (k.startsWith(id + ':')) delete this.riderCache[k];
+    }
+    this.scaleCache = {};
+
+    if (updatedChar.isCustom) {
+      this.saveCustomCharacters();
+    } else {
+      const overrides = this._loadBuiltinOverrides();
+      const ov = {
+        name: updatedChar.name,
+        badge: updatedChar.badge,
+        description: updatedChar.description,
+        bodyStyle: updatedChar.bodyStyle,
+        fullPhoto: updatedChar.fullPhoto,
+        useHelmet: updatedChar.useHelmet,
+        hasPhoto: updatedChar.hasPhoto,
+        gender: updatedChar.gender,
+        skinTone: updatedChar.skinTone,
+        outfit: updatedChar.outfit,
+        hairColor: updatedChar.hairColor,
+        accessory: updatedChar.accessory,
+        headSize: updatedChar.headSize,
+        headSprite: updatedChar.headSprite,
+        portrait: updatedChar.portrait,
+        stats: updatedChar.stats
+      };
+      if (validNewImg || clearPhoto) {
+        ov.sprites = updatedChar.sprites;
+      } else if (overrides[id] && overrides[id].sprites) {
+        ov.sprites = overrides[id].sprites;
+      }
+      overrides[id] = ov;
+      this._saveBuiltinOverrides(overrides);
+    }
+
+    await this.preloadAllSprites();
+    this.ensureGeneratedHeadsAndPortraits();
+    this.select(id);
+    this._notifyChange('update', updatedChar);
+    return updatedChar;
+  }
+
+  /** Atualiza rapidamente acessório / capacete direto do Closet sem abrir o Estúdio. */
+  setCharacterQuickAppearance(id, opts = {}) {
+    const idx = this.characters.findIndex(c => c.id === id);
+    if (idx === -1) return null;
+    const existing = this.characters[idx];
+    const nextAcc = (typeof opts.accessory === 'string' && opts.accessory.trim())
+      ? opts.accessory.trim()
+      : existing.accessory;
+    const nextHelmet = (typeof opts.useHelmet === 'boolean')
+      ? opts.useHelmet
+      : (existing.useHelmet !== false);
+
+    const updated = this.normalizeCharacter({
+      ...existing,
+      accessory: nextAcc,
+      useHelmet: nextHelmet
+    });
+
+    if (updated.bodyStyle === 'custom' && !updated.hasPhoto && typeof document !== 'undefined') {
+      const headCanvas = this.composeIllustratedHeadCanvas({
+        skinTone: updated.skinTone,
+        gender: updated.gender,
+        hairColor: updated.hairColor,
+        outfit: updated.outfit,
+        useHelmet: updated.useHelmet
+      });
+      this.loadedHeads[id] = headCanvas;
+      const url = this.safeToDataUrl(headCanvas, updated.portrait || '', true);
+      updated.headSprite = '';
+      updated.portrait = url;
+    }
+
+    this.characters[idx] = updated;
+    if (updated.isCustom) {
+      this.saveCustomCharacters();
+    } else {
+      const overrides = this._loadBuiltinOverrides();
+      overrides[id] = {
+        ...(overrides[id] || {}),
+        name: updated.name,
+        badge: updated.badge,
+        description: updated.description,
+        bodyStyle: updated.bodyStyle,
+        fullPhoto: updated.fullPhoto,
+        useHelmet: updated.useHelmet,
+        hasPhoto: updated.hasPhoto,
+        gender: updated.gender,
+        skinTone: updated.skinTone,
+        outfit: updated.outfit,
+        hairColor: updated.hairColor,
+        accessory: updated.accessory,
+        headSize: updated.headSize,
+        portrait: updated.portrait,
+        stats: updated.stats
+      };
+      this._saveBuiltinOverrides(overrides);
+    }
+
+    this._notifyChange('update', updated);
+    return updated;
+  }
+
+  canDeleteCharacter(id) {
     const target = this.characters.find(c => c.id === id);
-    if (!target || !target.isCustom) return false;
+    if (!target) return false;
+    if (!this.isCharacterUnlocked(id)) return false;
+    const unlockedCount = this.characters.filter(c => this.isCharacterUnlocked(c.id)).length;
+    return unlockedCount > 1;
+  }
+
+  deleteCharacter(id) {
+    if (!this.canDeleteCharacter(id)) return false;
+    const target = this.characters.find(c => c.id === id);
+    if (!target) return false;
 
     this.characters = this.characters.filter(c => c.id !== id);
     delete this.loadedImages[id];
@@ -1257,13 +1672,232 @@ class CharacterManager {
       if (k.startsWith(id + ':')) delete this.riderCache[k];
     }
     this.scaleCache = {};
-    this.saveCustomCharacters();
+
+    if (target.isCustom) {
+      this.saveCustomCharacters();
+      if (window.progressionManager && typeof window.progressionManager.deleteProfile === 'function') {
+        window.progressionManager.deleteProfile(id);
+      }
+    } else {
+      const hidden = this._loadHiddenBuiltins();
+      if (!hidden.includes(id)) {
+        hidden.push(id);
+        this._saveHiddenBuiltins(hidden);
+      }
+    }
 
     if (this.selectedId === id) {
       const fallback = this.characters.find(c => this.isCharacterUnlocked(c.id)) || this.characters[0];
-      this.select(fallback ? fallback.id : 'luigi_3d');
+      if (fallback) this.select(fallback.id);
     }
+    this._notifyChange('delete', target);
     return true;
+  }
+
+  deleteCustomCharacter(id) {
+    return this.deleteCharacter(id);
+  }
+
+  getHiddenBuiltins() {
+    return this._loadHiddenBuiltins();
+  }
+
+  hasHiddenOrModifiedBuiltins() {
+    return this._loadHiddenBuiltins().length > 0 || Object.keys(this._loadBuiltinOverrides()).length > 0;
+  }
+
+  async restoreBuiltinCharacters() {
+    this._removeStorageKey(HIDDEN_BUILTINS_KEY);
+    this._removeStorageKey(BUILTIN_OVERRIDES_KEY);
+
+    const baseBuiltins = (this._rawBuiltins && this._rawBuiltins.length
+      ? this._rawBuiltins
+      : this._defaultBuiltins()).map(c => this.normalizeCharacter({ ...c, isCustom: false }));
+
+    const builtinIds = new Set(baseBuiltins.map(c => c.id));
+    const customChars = this.characters.filter(c => c.isCustom && !builtinIds.has(c.id));
+
+    for (const b of baseBuiltins) {
+      delete this.loadedImages[b.id];
+      delete this.loadedHeads[b.id];
+      delete this._failedHeads[b.id];
+      for (const k of Object.keys(this.riderCache)) {
+        if (k.startsWith(b.id + ':')) delete this.riderCache[k];
+      }
+    }
+    this.scaleCache = {};
+
+    this.characters = [...baseBuiltins, ...customChars];
+    await this.preloadAllSprites();
+    this.ensureGeneratedHeadsAndPortraits();
+
+    if (!this.characters.some(c => c.id === this.selectedId && this.isCharacterUnlocked(c.id))) {
+      const firstUnlocked = this.characters.find(c => this.isCharacterUnlocked(c.id)) || this.characters[0];
+      if (firstUnlocked) this.select(firstUnlocked.id);
+    }
+    if (window.progressionManager && typeof window.progressionManager.setActiveProfile === 'function') {
+      window.progressionManager.setActiveProfile(this.selectedId, this.getSelected());
+    }
+    this._notifyChange('restore', null);
+    return true;
+  }
+
+  /** Exporta metadados compactos do personagem para sincronização no Firestore (miniatura 160x160 WebP). */
+  exportCharacterMetaForCloud(charId) {
+    const char = this.characters.find(c => c.id === charId);
+    if (!char) return null;
+    const overrides = this._loadBuiltinOverrides();
+    const isBuiltinOverride = !char.isCustom && !!overrides[charId];
+
+    let headThumb = '';
+    if ((char.hasPhoto || char.fullPhoto) && typeof document !== 'undefined') {
+      const srcImg = this.loadedHeads[charId] || (this.loadedImages[charId] && this.loadedImages[charId].skate);
+      if (srcImg && this._isDrawableImage(srcImg)) {
+        try {
+          const tmp = document.createElement('canvas');
+          tmp.width = 160;
+          tmp.height = 160;
+          const tctx = tmp.getContext('2d');
+          tctx.imageSmoothingEnabled = true;
+          tctx.imageSmoothingQuality = 'high';
+          tctx.drawImage(srcImg, 0, 0, 160, 160);
+          const candidate = this.safeToDataUrl(tmp, '', true, 0.72);
+          if (candidate && candidate.length < 75000) headThumb = candidate;
+        } catch (_) {}
+      }
+      if (!headThumb && typeof char.headSprite === 'string' && char.headSprite.length < 75000) {
+        headThumb = char.headSprite;
+      } else if (!headThumb && typeof char.portrait === 'string' && char.portrait.startsWith('data:') && char.portrait.length < 75000) {
+        headThumb = char.portrait;
+      }
+    }
+
+    return {
+      isCustom: !!char.isCustom,
+      isBuiltinOverride,
+      charMeta: {
+        id: char.id,
+        name: char.name,
+        badge: char.badge || 'Skatista',
+        description: char.description || '',
+        bodyStyle: char.bodyStyle || 'custom',
+        fullPhoto: !!char.fullPhoto,
+        useHelmet: char.useHelmet !== false,
+        hasPhoto: !!char.hasPhoto,
+        gender: char.gender || 'boy',
+        skinTone: char.skinTone || 'fair',
+        outfit: char.outfit || 'street_blue',
+        hairColor: char.hairColor || 'brown',
+        accessory: char.accessory || 'none',
+        headSize: char.headSize || 'large',
+        headThumb,
+        stats: char.stats || { visual: 'Avatar 2D', favorito: '🌟 Todos', estilo: 'Exclusivo' }
+      }
+    };
+  }
+
+  /** Aplica personagens customizados e personalizações vindos da nuvem sem perder o que foi criado localmente. */
+  async applyCloudCharacters(cloudAccount, cloudProfilesMap) {
+    if (!cloudProfilesMap || typeof cloudProfilesMap !== 'object') return false;
+    const overrides = this._loadBuiltinOverrides();
+    let changedCustom = false;
+    let changedOverrides = false;
+
+    for (const [pid, pDoc] of Object.entries(cloudProfilesMap)) {
+      if (!pDoc || typeof pDoc !== 'object' || !pDoc.charMeta) continue;
+      const m = pDoc.charMeta;
+      const thumb = (typeof m.headThumb === 'string' && m.headThumb.startsWith('data:')) ? m.headThumb : '';
+
+      if (pDoc.isCustom) {
+        const idx = this.characters.findIndex(c => c.id === pid);
+        if (idx === -1) {
+          const restored = this.normalizeCharacter({
+            id: pid,
+            name: m.name || 'Skatista',
+            badge: m.badge || 'Avatar na Nuvem',
+            description: m.description || 'Personagem sincronizado pela nuvem!',
+            isCustom: true,
+            renderMode: 'sprite',
+            bodyStyle: m.fullPhoto ? 'sprite' : (m.bodyStyle || 'custom'),
+            fullPhoto: !!m.fullPhoto,
+            useHelmet: m.useHelmet !== false,
+            hasPhoto: !!m.hasPhoto,
+            gender: m.gender || 'boy',
+            skinTone: m.skinTone || 'fair',
+            outfit: m.outfit || 'street_blue',
+            hairColor: m.hairColor || 'brown',
+            accessory: m.accessory || 'none',
+            headSize: m.headSize || 'large',
+            headSprite: m.hasPhoto ? thumb : '',
+            portrait: thumb || '',
+            sprites: m.fullPhoto && thumb ? { skate: thumb, duck: thumb, jump: thumb, trick: thumb } : { skate: '', duck: '', jump: '', trick: '' },
+            stats: m.stats || { visual: 'Avatar 2D', favorito: '🌟 Todos', estilo: 'Exclusivo' },
+            width: 105,
+            height: 130,
+            duckHeight: 85
+          });
+          this.characters.push(restored);
+          changedCustom = true;
+        } else {
+          const existing = this.characters[idx];
+          // Atualiza foto caso ainda não tivesse localmente ou meta mais nova
+          if (thumb && !existing.headSprite && m.hasPhoto) {
+            existing.headSprite = thumb;
+            existing.portrait = thumb;
+            changedCustom = true;
+          }
+        }
+      } else if (pDoc.isBuiltinOverride) {
+        const idx = this.characters.findIndex(c => c.id === pid && !c.isCustom);
+        if (idx >= 0) {
+          const base = this.characters[idx];
+          const ov = {
+            ...overrides[pid],
+            name: m.name || base.name,
+            badge: m.badge || base.badge,
+            description: m.description || base.description,
+            bodyStyle: m.bodyStyle || base.bodyStyle,
+            fullPhoto: !!m.fullPhoto,
+            useHelmet: m.useHelmet !== false,
+            hasPhoto: !!m.hasPhoto,
+            gender: m.gender || base.gender,
+            skinTone: m.skinTone || base.skinTone,
+            outfit: m.outfit || base.outfit,
+            hairColor: m.hairColor || base.hairColor,
+            accessory: m.accessory || base.accessory,
+            headSize: m.headSize || base.headSize
+          };
+          if (thumb) {
+            ov.headSprite = thumb;
+            ov.portrait = thumb;
+          }
+          overrides[pid] = ov;
+          this.characters[idx] = this.normalizeCharacter({ ...base, ...ov, id: pid, isCustom: false });
+          changedOverrides = true;
+        }
+      }
+    }
+
+    if (changedCustom) this.saveCustomCharacters();
+    if (changedOverrides) this._saveBuiltinOverrides(overrides);
+
+    if (cloudAccount && Array.isArray(cloudAccount.hiddenBuiltins) && cloudAccount.hiddenBuiltins.length > 0) {
+      const mergedHidden = Array.from(new Set([...this._loadHiddenBuiltins(), ...cloudAccount.hiddenBuiltins]));
+      const visible = this.characters.filter(c => c.isCustom || !mergedHidden.includes(c.id));
+      if (visible.some(c => this.isCharacterUnlocked(c.id))) {
+        this._saveHiddenBuiltins(mergedHidden);
+        this.characters = visible;
+      }
+    }
+
+    await this.preloadAllSprites();
+    this.ensureGeneratedHeadsAndPortraits();
+
+    if (!this.characters.some(c => c.id === this.selectedId && this.isCharacterUnlocked(c.id))) {
+      const firstUnlocked = this.characters.find(c => this.isCharacterUnlocked(c.id)) || this.characters[0];
+      if (firstUnlocked) this.select(firstUnlocked.id);
+    }
+    return changedCustom || changedOverrides;
   }
 }
 
