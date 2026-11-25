@@ -1,5 +1,5 @@
 // Service Worker do Luigi Radical Skate (PWA Offline + Atualização Segura)
-const CACHE_NAME = 'luigi-skate-v8';
+const CACHE_NAME = 'luigi-skate-v9';
 
 const CORE_ASSETS = [
   './',
@@ -20,10 +20,15 @@ const CORE_ASSETS = [
   './assets/icons/icon-512.png',
   './assets/icons/icon-maskable-512.png',
   './assets/portraits/portrait_luigi_3d.png',
+  './assets/portraits/portrait_luigi_real.png',
   './assets/sprites/luigi_3d_skate.png',
   './assets/sprites/luigi_3d_duck.png',
   './assets/sprites/luigi_3d_jump.png',
   './assets/sprites/luigi_3d_trick.png',
+  './assets/sprites/luigi_real_skate.png',
+  './assets/sprites/luigi_real_duck.png',
+  './assets/sprites/luigi_real_jump.png',
+  './assets/sprites/luigi_real_trick.png',
   './assets/rig/head_luigi.png',
   './assets/rig/helmet_overlay.png',
   './assets/rig/torso.png',
