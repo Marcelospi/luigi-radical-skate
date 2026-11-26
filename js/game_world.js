@@ -323,7 +323,8 @@ class GameWorld {
     this._lastTurboDist = -1000;
     this._nextCameoDist = 520 + Math.random() * 160;
     this._lastCameoType = '';
-    this._nextPortalScore = 15000;
+    // Portal raro: o 1º aparece entre 40.000 e 60.000 pontos da corrida
+    this._nextPortalScore = 40000 + Math.floor(Math.random() * 20000);
     this.voxelTimer = 0;
     this.voxelDuration = 1080;
 
@@ -485,10 +486,12 @@ class GameWorld {
     }
 
     // Gera o portal quando o jogador atinge a pontuação alta da corrida
-    if (!player.isGameOver && !player.isInLoop && this.voxelTimer <= 0 && this.portals.length === 0 && (player.score || 0) >= (this._nextPortalScore || 15000)) {
+    if (!player.isGameOver && !player.isInLoop && this.voxelTimer <= 0 && this.portals.length === 0 && (player.score || 0) >= (this._nextPortalScore || 40000)) {
       const hasSolidAhead = this.platforms.some(p => this.isPlatformSolid(p) && p.x <= 1320 && p.x + p.width >= 1390);
       if (hasSolidAhead) {
         this.spawnBlockPortal(1320);
+        // Próximo portal só bem mais adiante, mesmo que este seja perdido (antes, um portal perdido reaparecia na hora)
+        this._nextPortalScore = Math.floor((player.score || 0) + 80000 + Math.random() * 40000);
         if (window.soundSystem && window.soundSystem.playPowerup) window.soundSystem.playPowerup();
       }
     }
@@ -507,7 +510,6 @@ class GameWorld {
           player.voxelTimer = this.voxelTimer;
           player.voxelDuration = this.voxelDuration || 1080;
           player.invincibleTimer = Math.max(player.invincibleTimer || 0, 50);
-          this._nextPortalScore = Math.max((this._nextPortalScore || 15000) + 20000, Math.floor((player.score || 0) + 18000));
 
           if (window.game) {
             window.game.triggerHitstop?.(45);

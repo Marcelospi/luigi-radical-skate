@@ -1794,9 +1794,14 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
     const { world, player } = newRun();
     world._nextCameoDist = 999999;
     world.obstacles.length = 0;
-    player.score = 16000;
+    const firstPortalAt = world._nextPortalScore;
+    player.score = 39000;
+    step(world, player, {});
+    const noPortalBefore = world.portals.length === 0;
+    player.score = firstPortalAt + 500;
     step(world, player, {});
     const spawnedPortal = world.portals.length === 1;
+    const nextAfterSpawn = world._nextPortalScore;
 
     // Aproxima o portal do jogador e atravessa
     if (world.portals[0]) world.portals[0].x = player.x + 10;
@@ -1823,7 +1828,13 @@ console.log('\n=== 32. Distancia real de sessao, bonus x1.3 no Dificil e audio i
     step(world, player, {});
     const exitedSafely = world.voxelTimer === 0 && player.voxelTimer === 0 && player.invincibleTimer >= 50;
 
-    check('Portal da Dimensao Bloco surge ao atingir pontuacao alta (15.000+ pts)',
+    check('Portal e raro: 1o entre 40.000 e 60.000 pts e nada antes disso',
+      firstPortalAt >= 40000 && firstPortalAt < 60000 && noPortalBefore,
+      `primeiro=${firstPortalAt}`);
+    check('Proximo portal so 80.000+ pts depois (portal perdido nao reaparece na hora)',
+      nextAfterSpawn >= firstPortalAt + 500 + 80000,
+      `proximo=${nextAfterSpawn}`);
+    check('Portal da Dimensao Bloco surge ao atingir pontuacao alta',
       spawnedPortal,
       `portals=${world.portals.length}`);
     check('Atravessar o portal ativa modo Voxel com pontuacao 2X',
