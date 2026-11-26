@@ -443,11 +443,13 @@ class Game {
     let isVisitor = false;
     try { isVisitor = sessionStorage.getItem('luigi_visitor_session') === '1'; } catch (_) {}
 
-    if (loggedIn || isVisitor) {
-      this.setState('MENU');
-    } else {
-      this.openAuth('MENU');
+    // Jogar primeiro, conta depois: quem abre o link entra direto no menu como visitante.
+    // A conta da família continua disponível no botão "☁️ Entrar" do menu.
+    if (!loggedIn && !isVisitor) {
+      try { sessionStorage.setItem('luigi_visitor_session', '1'); } catch (_) {}
     }
+    this.setState('MENU');
+    this.readChallengeFromUrl();
 
     this.refreshMenuInfo();
     this.el.highscore.textContent = formatNumber(this.highScore);
@@ -929,6 +931,7 @@ class Game {
     on('btn-pause-restart', () => { this.bankCoinsIfNeeded(); this.startPlay(); });
     on('btn-pause-menu', () => this.setState('MENU'), 'back');
     on('btn-restart', () => { this.flushOnlineScoreIfNeeded(); this.startPlay(); });
+    on('btn-challenge-friend', () => this.shareChallenge());
     on('btn-gameover-menu', () => { this.flushOnlineScoreIfNeeded(); this.setState('MENU'); }, 'back');
     on('btn-mute-hud', () => this.toggleMute(), null, { blur: true });
     on('tab-lb-global', () => this.switchLeaderboardTab('global'));
@@ -3161,7 +3164,7 @@ class Game {
         this.el.gameoverTitle.textContent = '⏱️ Tempo Esgotado!';
         this.el.gameoverTitle.className = 'screen-title screen-title--good';
       } else {
-        this.el.gameoverTitle.textContent = 'Fim da linha';
+        this.el.gameoverTitle.textContent = 'Quase! Mais uma?';
         this.el.gameoverTitle.className = 'screen-title screen-title--danger';
       }
     }
@@ -3191,7 +3194,13 @@ class Game {
     }
 
     document.getElementById('final-combo').textContent = 'x' + p.bestCombo;
-    document.getElementById('gameover-reason').textContent = p.deathReason || 'Boa sessão radical!';
+    let reasonText = p.deathReason || 'Boa sessão radical!';
+    if (this.challengeScore && !isFree) {
+      reasonText += p.score > this.challengeScore
+        ? ` · 🎯 Você venceu o desafio de ${formatNumber(this.challengeScore)} pts!`
+        : ` · 🎯 Faltaram ${formatNumber(this.challengeScore - p.score + 1)} pts para vencer o desafio`;
+    }
+    document.getElementById('gameover-reason').textContent = reasonText;
     this.animateGameOverCounters(p.score, runDist, p.coins);
 
     // Treino Livre não entra no placar competitivo
@@ -3377,6 +3386,13 @@ class Game {
 
     const input = this.el.playerNameInput;
     const name = (input && input.value ? input.value : '').trim() || (this.lastPlayerName || 'Skatista');
+    if (!auto && typeof window.hasBlockedWord === 'function' && window.hasBlockedWord(name)) {
+      if (this.el.registerFeedback) {
+        this.el.registerFeedback.hidden = false;
+        this.el.registerFeedback.textContent = '🙅 Esse nome não pode ir para o placar. Escolha outro apelido!';
+      }
+      return;
+    }
     this.lastPlayerName = name;
     try {
       localStorage.setItem('luigi_skate_last_player_name', name);
@@ -3993,6 +4009,45 @@ class Game {
   hideCoach() {
     const el = document.getElementById('coach-hint');
     if (el) el.hidden = true;
+  }
+
+  /** Lê ?desafio=PONTOS do link recebido de um amigo e mostra a meta. */
+  readChallengeFromUrl() {
+    let score = 0;
+    try {
+      score = Math.floor(Number(new URLSearchParams(location.search).get('desafio')) || 0);
+    } catch (_) {}
+    if (score < 1 || score > 9999999) return;
+    this.challengeScore = score;
+    setTimeout(() => this.showToast({
+      icon: '🎯',
+      title: `Desafio: faça mais de ${formatNumber(score)} pontos!`,
+      subtitle: 'Um amigo te desafiou. Aperte JOGAR!',
+      info: true
+    }), 900);
+  }
+
+  /** Compartilha a pontuação da última partida com um link de desafio. */
+  async shareChallenge() {
+    const score = Math.max(0, Math.floor((this.player && this.player.score) || 0));
+    const url = `${location.origin}${location.pathname}${score > 0 ? `?desafio=${score}` : ''}`;
+    const text = score > 0
+      ? `Fiz ${formatNumber(score)} pontos no Luigi Radical! Consegue me superar? 🛹`
+      : 'Vem jogar Luigi Radical comigo! 🛹';
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'Luigi Radical', text, url });
+        return;
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      this.showToast({ icon: '📋', title: 'Link copiado!', subtitle: 'Cole no WhatsApp para desafiar seus amigos', info: true });
+    } catch (_) {
+      window.open(`https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}`, '_blank', 'noopener');
+    }
   }
 
   showToast({ icon = '✨', title = '', reward = 0, subtitle = '', info = false } = {}) {

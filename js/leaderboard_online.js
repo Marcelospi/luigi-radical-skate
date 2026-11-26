@@ -58,12 +58,40 @@ function sanitizeText(raw, fallback, minLen, maxLen) {
   return out.length >= minLen ? out : fallback;
 }
 
-function sanitizeAvatarThumb(raw) {
-  if (typeof raw !== 'string') return '';
-  const s = raw.trim();
-  if (s.length < 20 || s.length > 25000) return '';
-  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) return '';
-  return s;
+// Filtro simples de palavrões/ofensas para nomes exibidos no placar público (público infantil).
+// Compara sem acentos e ignorando trocas comuns (4->a, 3->e, 1->i, 0->o, $->s, @->a).
+const BLOCKED_NAME_WORDS = [
+  'porra', 'caralho', 'buceta', 'boceta', 'cacete', 'merda', 'bosta', 'foder', 'foda', 'fodase', 'fdp',
+  'puta', 'puto', 'putaria', 'viado', 'veado', 'bicha', 'arrombado', 'arrombada', 'cuzao', 'cuzinho',
+  'piroca', 'rola', 'xoxota', 'xereca', 'punheta', 'siririca', 'vagabunda', 'vagabundo',
+  'vadia', 'corno', 'otario', 'otaria', 'babaca', 'retardado', 'retardada', 'mongol', 'idiota',
+  'imbecil', 'nazi', 'hitler', 'sexo', 'pornô', 'porno', 'nude',
+  'nudes', 'pelado', 'pelada', 'fuck', 'shit', 'bitch', 'dick', 'pussy', 'ass', 'nigger', 'nigga'
+].map(w => w.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+
+function normalizeForFilter(text, leet) {
+  const base = String(text || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return leet
+    ? base.replace(/4|@/g, 'a').replace(/3/g, 'e').replace(/1|!/g, 'i').replace(/0/g, 'o').replace(/\$|5/g, 's')
+    : base;
+}
+
+/** true se o nome contém palavra bloqueada (palavra inteira ou grudada sem espaços/símbolos). */
+function hasBlockedWord(text) {
+  return [false, true].some((leet) => {
+    const norm = normalizeForFilter(text, leet);
+    const words = norm.split(/[^a-z]+/).filter(Boolean);
+    const joined = norm.replace(/[^a-z]/g, '');
+    return BLOCKED_NAME_WORDS.some(w => words.includes(w) || (w.length >= 5 && joined.includes(w)));
+  });
+}
+
+/** Nome seguro para o placar público: troca nomes ofensivos por "Skatista". */
+function safePublicName(raw) {
+  const name = sanitizeText(raw, 'Skatista', 1, 24);
+  return hasBlockedWord(name) ? 'Skatista' : name;
 }
 
 function sanitizeIdList(arr, maxItems) {
@@ -200,7 +228,7 @@ class OnlineLeaderboard {
     const sportId = VALID_SPORTS.includes(rawSport) ? rawSport : 'skate';
     const defaultSportIcon = SPORT_DEFAULT_ICONS[sportId] || '🛹';
 
-    const name = sanitizeText(entry && entry.name, 'Skatista', 1, 24);
+    const name = safePublicName(entry && entry.name);
     const characterId = sanitizeText(entry && entry.characterId, 'luigi_3d', 1, 40);
     const characterName = sanitizeText(entry && entry.characterName, 'Luigi 3D', 1, 30);
     const sportIcon = sanitizeText(entry && entry.sportIcon, defaultSportIcon, 1, 8);
@@ -225,8 +253,7 @@ class OnlineLeaderboard {
       time,
       createdAt: serverTimestampFn()
     };
-    const thumb = sanitizeAvatarThumb(entry && entry.avatarThumb);
-    if (thumb) payload.avatarThumb = thumb;
+    // Privacidade infantil: nunca enviar miniatura (pode conter foto do rosto) ao placar público.
     const showcase = sanitizeShowcase(entry && entry.showcase);
     if (showcase) payload.showcase = showcase;
     return payload;
@@ -237,11 +264,11 @@ class OnlineLeaderboard {
     const base = this.buildStrictPayload(entry, serverTimestampFn);
     if (!base) return null;
     if (!user || !user.uid) return base;
-    const rawAcc = user.displayName || (user.email ? String(user.email).split('@')[0] : '') || base.name;
+    // Privacidade: o placar público mostra só o apelido do jogo, nunca o nome real da conta Google/e-mail.
     return {
       ...base,
       uid: sanitizeText(user.uid, '', 1, 128),
-      accountName: sanitizeText(rawAcc, base.name, 1, 30)
+      accountName: base.name
     };
   }
 
@@ -279,14 +306,13 @@ class OnlineLeaderboard {
       const sportId = VALID_SPORTS.includes(d.sportId) ? d.sportId : 'skate';
       const characterId = sanitizeText(d.characterId, 'luigi_3d', 1, 40);
       const uid = (typeof d.uid === 'string' && d.uid.trim()) ? d.uid.trim().slice(0, 128) : '';
-      const accountName = (typeof d.accountName === 'string' && d.accountName.trim())
-        ? sanitizeText(d.accountName, '', 1, 30)
-        : '';
-      const avatarThumb = sanitizeAvatarThumb(d.avatarThumb);
+      // Recordes antigos podem ter foto e nome real da conta: não exibimos nenhum dos dois.
+      const accountName = '';
+      const avatarThumb = '';
       const showcase = sanitizeShowcase(d.showcase);
       const item = {
         id: doc.id,
-        name: sanitizeText(d.name, 'Skatista', 1, 24),
+        name: safePublicName(d.name),
         score: Math.max(0, Math.floor(Number(d.score) || 0)),
         distance: Math.max(0, Math.floor(Number(d.distance) || 0)),
         characterId,
@@ -376,3 +402,4 @@ class OnlineLeaderboard {
 }
 
 window.onlineLeaderboard = new OnlineLeaderboard();
+window.hasBlockedWord = hasBlockedWord;

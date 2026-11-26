@@ -20,11 +20,12 @@
   <meta property="og:locale" content="pt_BR">
   <meta property="og:title" content="Luigi Radical Skate 🛹">
   <meta property="og:description" content="Skate, BMX, Patinete e Patins com manobras radicais, 6 fases, Loopings 360°, Oficina, Estúdio de Avatares por foto e Placar Global!">
-  <meta property="og:image" content="assets/og-cover.png">
+  <meta property="og:url" content="https://marcelospi.github.io/luigi-radical-skate/">
+  <meta property="og:image" content="https://marcelospi.github.io/luigi-radical-skate/assets/og-cover.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Luigi Radical Skate 🛹">
   <meta name="twitter:description" content="Skate, BMX, Patinete e Patins com manobras radicais, 6 fases, Loopings 360°, Oficina e Placar Global!">
-  <meta name="twitter:image" content="assets/og-cover.png">
+  <meta name="twitter:image" content="https://marcelospi.github.io/luigi-radical-skate/assets/og-cover.png">
 
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23070812'/%3E%3Crect x='4' y='13' width='24' height='4' rx='2' fill='%2322d3ee'/%3E%3Ccircle cx='10' cy='21' r='3' fill='%23f43f7e'/%3E%3Ccircle cx='22' cy='21' r='3' fill='%23f43f7e'/%3E%3C/svg%3E">
 
@@ -194,7 +195,7 @@
         <div class="auth-header">
           <span class="brandmark-kicker">Arcade Radical · Conta na Nuvem</span>
           <h2 class="brandmark-title auth-brand"><span>LUIGI</span><b>RADICAL</b></h2>
-          <p class="auth-subtitle">Entre na sua conta para levar seus personagens, itens comprados, troféus e recordes para qualquer celular ou computador!</p>
+          <p class="auth-subtitle">Conta da família, para pais ou responsáveis: leva personagens, itens, troféus e recordes para qualquer celular ou computador. Para jogar, não precisa de conta!</p>
         </div>
 
         <!-- Modo Desconectado: Login / Cadastro / Visitante -->
@@ -802,7 +803,7 @@
     <!-- ================= TELA: FIM DE JOGO ================= -->
     <section id="screen-game-over" class="screen hidden">
       <div class="screen-head">
-        <h2 id="gameover-title" class="screen-title screen-title--danger">Fim da linha</h2>
+        <h2 id="gameover-title" class="screen-title screen-title--danger">Quase! Mais uma?</h2>
         <p class="screen-sub" id="gameover-reason">Boa sessão de skate!</p>
       </div>
 
@@ -834,7 +835,7 @@
       <div id="gameover-register-box" class="score-register-box">
         <h3 class="register-title">🛹 Registre seu Nome no Placar!</h3>
         <form id="form-save-score" class="register-input-group" onsubmit="event.preventDefault();">
-          <input type="text" id="leaderboard-name-input" class="register-input" maxlength="24" placeholder="Digite seu nome (ex: Luigi)" autocomplete="off">
+          <input type="text" id="leaderboard-name-input" class="register-input" maxlength="24" placeholder="Seu apelido (sem sobrenome)" autocomplete="off">
           <button type="submit" id="btn-save-score" class="btn btn-primary"><span class="btn-icon">⭐</span> Gravar Pontuação</button>
         </form>
         <p id="register-feedback" class="register-feedback" hidden>🎉 Pontuação salva com sucesso!</p>
@@ -854,6 +855,7 @@
       <nav class="menu-buttons">
         <button id="btn-restart" class="btn btn-primary btn-lg">Jogar novamente <span class="btn-hint">Enter</span></button>
         <div class="menu-row">
+          <button id="btn-challenge-friend" class="btn btn-ghost">📣 Desafiar amigo</button>
           <button id="btn-gameover-shop" class="btn btn-ghost">🛠️ Oficina (<span id="gameover-shop-coins">0</span> 🪙)</button>
           <button id="btn-gameover-menu" class="btn btn-quiet">Menu principal</button>
         </div>
