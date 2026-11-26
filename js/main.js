@@ -1593,6 +1593,7 @@ class Game {
 
   setState(state) {
     const prevState = this.state;
+    if (state !== 'PLAYING') this.hideCoach();
 
     // Garante envio automático da pontuação online ao sair da tela de Fim de Jogo por qualquer caminho
     if (prevState === 'GAME_OVER' && state !== 'GAME_OVER') {
@@ -3961,6 +3962,55 @@ class Game {
     }
   }
 
+  /**
+   * Tutorial da 1ª partida: uma dica por vez, avançando quando a criança faz a ação.
+   * Fica salvo no aparelho; não aparece de novo depois de concluído.
+   */
+  updateCoach() {
+    if (this._coachDone === undefined) {
+      try { this._coachDone = localStorage.getItem('luigi_tutorial_done') === '1'; } catch (_) { this._coachDone = false; }
+      this._coachStep = 0;
+      this._coachTimer = 0;
+    }
+    if (this._coachDone) return;
+    const el = document.getElementById('coach-hint');
+    if (!el) return;
+
+    const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const p = this.player;
+    const steps = [
+      { text: touch ? '👉 Toque em <b>REMAR</b> para ganhar velocidade' : '👉 Aperte <b>→</b> para remar e ganhar velocidade', done: () => p.isPushing },
+      { text: touch ? '⬆️ Toque em <b>PULAR</b> para saltar' : '⬆️ Aperte <b>Espaço</b> para pular', done: () => !p.onGround },
+      { text: touch ? '🌀 No ar, toque em <b>FLIP</b> para uma manobra!' : '🌀 No ar, aperte <b>Z</b> para uma manobra!', done: () => Array.isArray(p.tricksInAir) && p.tricksInAir.length > 0 },
+      { text: '🪙 Pegue moedas e as letras <b>L-U-I-G-I</b>. Boa sorte!', done: () => this._coachTimer > 180 }
+    ];
+
+    const step = steps[this._coachStep];
+    if (!step) {
+      this._coachDone = true;
+      try { localStorage.setItem('luigi_tutorial_done', '1'); } catch (_) {}
+      this.hideCoach();
+      return;
+    }
+    if (el.dataset.step !== String(this._coachStep)) {
+      el.dataset.step = String(this._coachStep);
+      el.innerHTML = step.text;
+      this._coachTimer = 0;
+    }
+    el.hidden = false;
+    this._coachTimer++;
+    // Espera um instante na dica antes de aceitar a ação, para dar tempo de ler
+    if (this._coachTimer > 30 && step.done()) {
+      if (this._coachStep < steps.length - 1 && window.soundSystem && window.soundSystem.playUI) window.soundSystem.playUI('click');
+      this._coachStep++;
+    }
+  }
+
+  hideCoach() {
+    const el = document.getElementById('coach-hint');
+    if (el) el.hidden = true;
+  }
+
   /** Lê ?desafio=PONTOS do link recebido de um amigo e mostra a meta. */
   readChallengeFromUrl() {
     let score = 0;
@@ -4277,6 +4327,7 @@ class Game {
     this.world.update(p);
     p.update(this.world, this.input);
     this.input.tick();
+    this.updateCoach();
     this.camera.update(p, this.world);
     window.particleSystem.update();
 
