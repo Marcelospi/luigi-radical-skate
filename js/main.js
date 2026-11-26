@@ -935,6 +935,7 @@ class Game {
     on('btn-gameover-menu', () => { this.flushOnlineScoreIfNeeded(); this.setState('MENU'); }, 'back');
     on('btn-mute-hud', () => this.toggleMute(), null, { blur: true });
     on('tab-lb-global', () => this.switchLeaderboardTab('global'));
+    on('tab-lb-week', () => this.switchLeaderboardTab('week'));
     on('tab-lb-local', () => this.switchLeaderboardTab('local'));
 
     const setupOverlay = document.getElementById('match-setup-modal');
@@ -3482,19 +3483,15 @@ class Game {
   }
 
   switchLeaderboardTab(tab) {
-    this.leaderboardTab = tab === 'local' ? 'local' : 'global';
-    const tabGlobal = document.getElementById('tab-lb-global');
-    const tabLocal = document.getElementById('tab-lb-local');
+    this.leaderboardTab = ['local', 'week'].includes(tab) ? tab : 'global';
     const clearBtn = document.getElementById('btn-clear-leaderboard');
 
-    if (tabGlobal) {
-      tabGlobal.classList.toggle('active', this.leaderboardTab === 'global');
-      tabGlobal.setAttribute('aria-selected', this.leaderboardTab === 'global' ? 'true' : 'false');
-    }
-    if (tabLocal) {
-      tabLocal.classList.toggle('active', this.leaderboardTab === 'local');
-      tabLocal.setAttribute('aria-selected', this.leaderboardTab === 'local' ? 'true' : 'false');
-    }
+    ['global', 'week', 'local'].forEach((id) => {
+      const btn = document.getElementById(`tab-lb-${id}`);
+      if (!btn) return;
+      btn.classList.toggle('active', this.leaderboardTab === id);
+      btn.setAttribute('aria-selected', this.leaderboardTab === id ? 'true' : 'false');
+    });
     if (clearBtn) {
       clearBtn.hidden = this.leaderboardTab !== 'local';
     }
@@ -3517,13 +3514,20 @@ class Game {
       return;
     }
 
-    if (statusEl) statusEl.textContent = isBadge ? '⏳ Global…' : '⏳ Carregando ranking global…';
+    const isWeek = mode === 'week';
+    if (statusEl) statusEl.textContent = isBadge ? '⏳ Global…' : (isWeek ? '⏳ Carregando placar da semana…' : '⏳ Carregando ranking global…');
 
     if (window.onlineLeaderboard && window.onlineLeaderboard.isAvailable()) {
       try {
-        const scores = await window.onlineLeaderboard.fetchTopScores(40);
+        const scores = isWeek
+          ? await window.onlineLeaderboard.fetchWeekScores(40)
+          : await window.onlineLeaderboard.fetchTopScores(40);
         if (this._lbReqSeq[containerId] !== reqSeq) return;
-        if (statusEl) statusEl.textContent = isBadge ? '🌎 Global' : '🌎 Placar universal — todos os jogadores';
+        if (statusEl) {
+          statusEl.textContent = isBadge
+            ? '🌎 Global'
+            : (isWeek ? '📅 Melhores dos últimos 7 dias' : '🌎 Placar universal — todos os jogadores');
+        }
         if (isMain) this._cachedLeaderboardList = scores;
         this.renderLeaderboard(containerId, scores);
         return;
