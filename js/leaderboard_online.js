@@ -297,6 +297,28 @@ class OnlineLeaderboard {
       sdk.limit(safeLimit)
     );
 
+    return this._readScores(sdk, q);
+  }
+
+  /** Recordes dos últimos 7 dias (dá chance a quem começou agora de aparecer no placar). */
+  async fetchWeekScores(max = 40) {
+    const ready = await this.ensureReady();
+    if (!ready) throw new Error('Placar global indisponível');
+
+    const { db, sdk } = ready;
+    const weekAgo = sdk.Timestamp.fromMillis(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    // Filtro e ordenação no mesmo campo (sem índice composto); a ordem por pontos é feita aqui.
+    const q = sdk.query(
+      sdk.collection(db, COLLECTION_NAME),
+      sdk.where('createdAt', '>=', weekAgo),
+      sdk.orderBy('createdAt', 'desc'),
+      sdk.limit(100)
+    );
+    const results = await this._readScores(sdk, q);
+    return results.slice(0, Math.max(1, Math.min(50, Math.floor(Number(max) || 40))));
+  }
+
+  async _readScores(sdk, q) {
     const snapshot = await withTimeout(sdk.getDocs(q));
     const results = [];
     const seen = new Set();
