@@ -1,5 +1,5 @@
 // Service Worker do Luigi Radical Skate (PWA Offline + Atualização Segura)
-const CACHE_NAME = 'luigi-skate-v11';
+const CACHE_NAME = 'luigi-skate-v12';
 
 const CORE_ASSETS = [
   './',

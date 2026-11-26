@@ -547,7 +547,8 @@ class ParticleSystem {
       scale: 0.4,
       age: 0
     });
-    while (this.texts.length > 3) this.texts.shift();
+    // No máximo 2 textos ao mesmo tempo, para a tela não ficar poluída
+    while (this.texts.length > 2) this.texts.shift();
   }
 
   // ---- Ciclo ---------------------------------------------------------------
